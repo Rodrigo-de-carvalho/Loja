@@ -1281,4 +1281,23 @@ code {
 .linha-sem-custo:hover {
   background: #fef3c7 !important;
 }
+
+/* ============================================================
+   BOTÃO ESTORNO
+   ============================================================ */
+.btn-estorno {
+  background: transparent;
+  color: var(--warning);
+  border: 1.5px solid var(--warning);
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all var(--transition);
+}
+
+.btn-estorno:hover {
+  background: var(--warning-light);
+}
 }

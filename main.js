@@ -51,6 +51,7 @@ function registrarHandlers() {
 
   /* Vendas */
   ipcMain.handle('vendas:finalizar',  (_, d)       => db.finalizarVenda(d))
+  ipcMain.handle('vendas:cancelar',   (_, id)      => db.cancelarVenda(id))
   ipcMain.handle('vendas:hoje',       ()           => db.vendasHoje())
   ipcMain.handle('vendas:mensais',    (_, m, a)    => db.vendasMensais(m, a))
   ipcMain.handle('vendas:lucro',      (_, m, a)    => db.lucroMensal(m, a))

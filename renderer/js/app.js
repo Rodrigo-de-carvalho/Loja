@@ -541,7 +541,12 @@ async function carregarHoje() {
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
         <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
+            <button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button>
+          </div>
+        </td>
       </tr>`).join('')
 }
 
@@ -566,7 +571,12 @@ async function carregarMensal() {
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
         <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
+            <button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button>
+          </div>
+        </td>
       </tr>`).join('')
 }
 
@@ -873,6 +883,34 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   doc.save(`lucro-${MESES_PT[mes].toLowerCase()}-${ano}-admin.pdf`)
   toast('PDF de lucro exportado!','success')
 })
+
+/* ============================================================
+   ESTORNO DE VENDA
+   ============================================================ */
+async function estornarVenda(id) {
+  const { venda, itens } = await api.detalhesVenda(id)
+  const linhaItens = itens.map(i =>
+    `• ${i.nome_produto} × ${i.quantidade} — ${fmtMoeda(i.preco_unitario * i.quantidade)}`
+  ).join('\n')
+
+  confirmar(
+    `Estornar a venda #${id} (${fmtMoeda(venda.total)})?\n\nIsso removerá o registro e devolverá os itens ao estoque.\n\n${linhaItens}`,
+    async () => {
+      try {
+        await api.cancelarVenda(id)
+        toast(`Venda #${id} estornada. Estoque restaurado.`, 'success')
+        await carregarProdutos()
+        // Recarrega a aba ativa de relatórios
+        const tabHoje   = document.getElementById('tab-hoje')
+        const tabMensal = document.getElementById('tab-mensal')
+        if (tabHoje.classList.contains('active'))   carregarHoje()
+        if (tabMensal.classList.contains('active')) carregarMensal()
+      } catch(err) {
+        toast(`Erro ao estornar: ${err.message}`, 'error')
+      }
+    }
+  )
+}
 
 /* ============================================================
    INICIALIZAÇÃO

@@ -98,8 +98,8 @@ class Database {
 
   criarProduto({ nome, preco_venda, codigo_barras, estoque }) {
     const { lastInsertRowid } = this.db.prepare(
-      'INSERT INTO produtos (nome, preco_custo, preco_venda, codigo_barras, estoque) VALUES (0, ?, ?, ?, ?)'
-    ).run(preco_venda, codigo_barras, estoque || 0)
+      'INSERT INTO produtos (nome, preco_custo, preco_venda, codigo_barras, estoque) VALUES (?, 0, ?, ?, ?)'
+    ).run(nome, preco_venda, codigo_barras, estoque || 0)
     return this.db.prepare('SELECT * FROM produtos WHERE id = ?').get(lastInsertRowid)
   }
 
@@ -206,6 +206,24 @@ class Database {
     const venda = this.db.prepare('SELECT * FROM vendas WHERE id = ?').get(id)
     const itens = this.db.prepare('SELECT * FROM itens_venda WHERE venda_id = ? ORDER BY id').all(id)
     return { venda, itens }
+  }
+
+  cancelarVenda(id) {
+    const restaurarEstoque = this.db.prepare(
+      'UPDATE produtos SET estoque = estoque + ? WHERE id = ?'
+    )
+    const deleteVenda = this.db.prepare('DELETE FROM vendas WHERE id = ?')
+    const getItens    = this.db.prepare('SELECT * FROM itens_venda WHERE venda_id = ?')
+
+    const transacao = this.db.transaction(() => {
+      const itens = getItens.all(id)
+      for (const item of itens) {
+        if (item.produto_id) restaurarEstoque.run(item.quantidade, item.produto_id)
+      }
+      return deleteVenda.run(id)
+    })
+
+    return transacao()
   }
 
   fechar() { this.db.close() }

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /* Vendas */
   finalizarVenda: (d)         => ipcRenderer.invoke('vendas:finalizar', d),
+  cancelarVenda:  (id)        => ipcRenderer.invoke('vendas:cancelar', id),
   vendasHoje:     ()          => ipcRenderer.invoke('vendas:hoje'),
   vendasMensais:  (m, a)      => ipcRenderer.invoke('vendas:mensais', m, a),
   lucroMensal:    (m, a)      => ipcRenderer.invoke('vendas:lucro', m, a),
