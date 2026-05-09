@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDV — Loja de Bebê</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ===== SIDEBAR ===== -->
+  <nav class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">🍼</div>
+      <div>
+        <div class="logo-title">Baby Store</div>
+        <div class="logo-sub">Sistema PDV</div>
+      </div>
+    </div>
+    <ul class="nav-list">
+      <li class="nav-item active" data-section="produtos">
+        <span class="nav-icon">📦</span>
+        <span>Produtos</span>
+      </li>
+      <li class="nav-item" data-section="etiquetas">
+        <span class="nav-icon">🏷️</span>
+        <span>Etiquetas</span>
+      </li>
+      <li class="nav-item" data-section="caixa">
+        <span class="nav-icon">🛒</span>
+        <span>Caixa</span>
+      </li>
+      <li class="nav-item" data-section="relatorios">
+        <span class="nav-icon">📊</span>
+        <span>Relatórios</span>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <span id="clock"></span>
+    </div>
+  </nav>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main">
+
+    <!-- ============================
+         SECTION: PRODUTOS
+         ============================ -->
+    <section id="section-produtos" class="section active">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Produtos</h1>
+          <p class="page-sub">Cadastro e gerenciamento do estoque</p>
+        </div>
+        <button class="btn btn-primary" id="btn-novo-produto">
+          <span>+</span> Novo Produto
+        </button>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="input-busca-produto" placeholder="Buscar por nome ou código...">
+        </div>
+        <span id="contador-produtos" class="badge-count"></span>
+      </div>
+
+      <div class="card table-card">
+        <table class="table" id="tabela-produtos">
+          <thead>
+            <tr>
+              <th>Código de Barras</th>
+              <th>Nome do Produto</th>
+              <th>Preço de Custo</th>
+              <th>Preço de Venda</th>
+              <th>Margem</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-produtos">
+            <tr>
+              <td colspan="6" class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div>Nenhum produto cadastrado</div>
+                <div class="empty-hint">Clique em "Novo Produto" para começar</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: ETIQUETAS
+         ============================ -->
+    <section id="section-etiquetas" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Etiquetas</h1>
+          <p class="page-sub">Imprima etiquetas com código de barras para seus produtos</p>
+        </div>
+        <button class="btn btn-primary" id="btn-imprimir-etiquetas">
+          🖨️ Imprimir Etiquetas
+        </button>
+      </div>
+
+      <div class="card" style="padding: 20px; margin-bottom: 20px;">
+        <div class="etiquetas-form">
+          <div class="form-group" style="flex:1;">
+            <label>Produto</label>
+            <select id="select-produto-etiqueta">
+              <option value="">— Selecione um produto —</option>
+            </select>
+          </div>
+          <div class="form-group" style="width:120px;">
+            <label>Quantidade</label>
+            <input type="number" id="input-qtd-etiqueta" value="1" min="1" max="100">
+          </div>
+          <div class="form-group" style="align-self:flex-end;">
+            <button class="btn btn-secondary" id="btn-add-etiqueta">Adicionar</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="etiquetas-lista-container" style="margin-bottom: 20px; display:none;">
+        <div class="card table-card">
+          <div class="card-header-row">
+            <h3>Etiquetas selecionadas</h3>
+            <button class="btn btn-sm btn-secondary" id="btn-limpar-etiquetas">Limpar tudo</button>
+          </div>
+          <table class="table">
+            <thead>
+              <tr><th>Produto</th><th>Quantidade</th><th></th></tr>
+            </thead>
+            <tbody id="tbody-etiquetas-lista"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" id="etiquetas-preview-container">
+        <div class="card-header-row">
+          <h3>Pré-visualização</h3>
+          <span class="text-muted" id="total-etiquetas-info"></span>
+        </div>
+        <div id="etiquetas-preview" class="etiquetas-grid">
+          <div class="empty-state" style="padding: 40px 0;">
+            <div class="empty-icon">🏷️</div>
+            <div>Adicione produtos para ver a pré-visualização</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: CAIXA
+         ============================ -->
+    <section id="section-caixa" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Caixa</h1>
+          <p class="page-sub" id="data-hoje"></p>
+        </div>
+        <div class="venda-numero">
+          Venda <span id="num-venda-atual">#—</span>
+        </div>
+      </div>
+
+      <div class="scanner-bar">
+        <div class="scanner-input-wrap">
+          <span class="scanner-icon">📷</span>
+          <input
+            type="text"
+            id="input-barcode"
+            placeholder="Digite ou leia o código de barras e pressione Enter..."
+            autocomplete="off"
+            autofocus
+          >
+        </div>
+        <button class="btn btn-secondary" id="btn-add-item">Adicionar</button>
+        <button class="btn btn-outline" id="btn-buscar-produto-nome">Buscar por nome</button>
+      </div>
+
+      <div class="caixa-grid">
+        <!-- Cart -->
+        <div class="card carrinho-card">
+          <div class="card-header-row">
+            <h3>🛒 Carrinho</h3>
+            <span id="carrinho-count" class="badge-count">0 itens</span>
+          </div>
+          <table class="table" id="tabela-carrinho">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th style="width:120px; text-align:center;">Quantidade</th>
+                <th style="width:110px;">Preço Unit.</th>
+                <th style="width:110px;">Subtotal</th>
+                <th style="width:50px;"></th>
+              </tr>
+            </thead>
+            <tbody id="tbody-carrinho">
+              <tr class="empty-row">
+                <td colspan="5" class="empty-state" style="padding: 48px 0;">
+                  <div class="empty-icon">🛒</div>
+                  <div>Carrinho vazio</div>
+                  <div class="empty-hint">Escaneie ou busque um produto</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Totals Panel -->
+        <div class="totais-panel">
+          <div class="card total-card">
+            <div class="total-label">Total da Venda</div>
+            <div class="total-value" id="total-venda">R$ 0,00</div>
+          </div>
+
+          <div class="card resumo-card">
+            <div class="resumo-row">
+              <span>Itens:</span>
+              <strong id="resumo-itens">0</strong>
+            </div>
+            <div class="resumo-row">
+              <span>Subtotal:</span>
+              <strong id="resumo-subtotal">R$ 0,00</strong>
+            </div>
+          </div>
+
+          <button
+            class="btn btn-success btn-block"
+            id="btn-finalizar-venda"
+            disabled
+          >
+            ✅ Finalizar Venda
+          </button>
+
+          <button class="btn btn-danger-outline btn-block" id="btn-cancelar-venda">
+            ✕ Cancelar Venda
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================
+         SECTION: RELATÓRIOS
+         ============================ -->
+    <section id="section-relatorios" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Relatórios</h1>
+          <p class="page-sub">Acompanhe vendas e lucratividade</p>
+        </div>
+      </div>
+
+      <div class="tabs-bar">
+        <button class="tab-btn active" data-tab="hoje">📅 Vendas de Hoje</button>
+        <button class="tab-btn" data-tab="mensal">📆 Histórico Mensal</button>
+        <button class="tab-btn" data-tab="lucro">💰 Lucro Mensal</button>
+      </div>
+
+      <!-- TAB: HOJE -->
+      <div id="tab-hoje" class="tab-pane active">
+        <div class="relatorio-toolbar">
+          <h2 id="titulo-hoje">Vendas de Hoje</h2>
+          <div class="relatorio-actions">
+            <button class="btn btn-secondary" id="btn-refresh-hoje">🔄 Atualizar</button>
+            <button class="btn btn-export" id="btn-export-hoje">📄 Exportar PDF</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="stats-hoje"></div>
+        <div class="card table-card">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nº</th>
+                <th>Hora</th>
+                <th>Itens</th>
+                <th>Total</th>
+                <th>Detalhes</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-hoje"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: MENSAL -->
+      <div id="tab-mensal" class="tab-pane">
+        <div class="relatorio-toolbar">
+          <div class="date-picker-group">
+            <select id="sel-mes-mensal"></select>
+            <select id="sel-ano-mensal"></select>
+            <button class="btn btn-secondary" id="btn-buscar-mensal">Buscar</button>
+          </div>
+          <div class="relatorio-actions">
+            <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="stats-mensal"></div>
+        <div class="card table-card">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nº</th>
+                <th>Data/Hora</th>
+                <th>Itens</th>
+                <th>Total</th>
+                <th>Detalhes</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-mensal"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- TAB: LUCRO -->
+      <div id="tab-lucro" class="tab-pane">
+        <div class="relatorio-toolbar">
+          <div class="date-picker-group">
+            <select id="sel-mes-lucro"></select>
+            <select id="sel-ano-lucro"></select>
+            <button class="btn btn-secondary" id="btn-buscar-lucro">Buscar</button>
+          </div>
+          <div class="relatorio-actions">
+            <button class="btn btn-export" id="btn-export-lucro">📄 Exportar PDF</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="stats-lucro"></div>
+        <div class="card" id="lucro-chart-area" style="padding:24px; display:none;">
+          <h3 style="margin-bottom:16px;">Composição</h3>
+          <div id="lucro-bar-visual"></div>
+        </div>
+      </div>
+    </section>
+
+  </main><!-- /.main -->
+
+  <!-- ===========================
+       MODAL: PRODUTO
+       =========================== -->
+  <div class="modal-overlay" id="modal-produto">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-produto-titulo">Novo Produto</h2>
+        <button class="modal-close" data-close="modal-produto">×</button>
+      </div>
+      <form id="form-produto" novalidate>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="produto-nome">Nome do Produto <span class="required">*</span></label>
+            <input type="text" id="produto-nome" placeholder="Ex: Body Manga Curta Azul P" required>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="produto-custo">Preço de Custo (R$) <span class="required">*</span></label>
+              <input type="number" id="produto-custo" placeholder="0,00" min="0" step="0.01" required>
+            </div>
+            <div class="form-group">
+              <label for="produto-venda">Preço de Venda (R$) <span class="required">*</span></label>
+              <input type="number" id="produto-venda" placeholder="0,00" min="0" step="0.01" required>
+            </div>
+          </div>
+          <div class="form-group" id="grupo-margem-info" style="display:none;">
+            <div class="margem-preview">
+              <span>Margem de lucro:</span>
+              <strong id="margem-preview-valor" class="positive">0%</strong>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Código de Barras</label>
+            <div class="barcode-box">
+              <svg id="barcode-preview"></svg>
+              <p class="barcode-caption" id="barcode-caption-texto">Gerado automaticamente ao salvar</p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-close="modal-produto">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btn-salvar-produto">Salvar Produto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===========================
+       MODAL: BUSCAR POR NOME (CAIXA)
+       =========================== -->
+  <div class="modal-overlay" id="modal-buscar-nome">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Buscar Produto</h2>
+        <button class="modal-close" data-close="modal-buscar-nome">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="search-box" style="margin-bottom:16px;">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="input-busca-caixa" placeholder="Digite o nome do produto...">
+        </div>
+        <div class="card table-card" style="max-height: 320px; overflow-y:auto;">
+          <table class="table" id="tabela-busca-caixa">
+            <thead><tr><th>Nome</th><th>Código</th><th>Preço</th><th></th></tr></thead>
+            <tbody id="tbody-busca-caixa"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-buscar-nome">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===========================
+       MODAL: DETALHES DA VENDA
+       =========================== -->
+  <div class="modal-overlay" id="modal-detalhes-venda">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2 id="detalhes-venda-titulo">Detalhes da Venda</h2>
+        <button class="modal-close" data-close="modal-detalhes-venda">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="card table-card">
+          <table class="table" id="tabela-detalhes-venda">
+            <thead>
+              <tr><th>Produto</th><th>Qtd</th><th>Preço Unit.</th><th>Subtotal</th></tr>
+            </thead>
+            <tbody id="tbody-detalhes-venda"></tbody>
+          </table>
+        </div>
+        <div class="detalhes-total" id="detalhes-total-row"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-detalhes-venda">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===========================
+       MODAL: CONFIRMAR AÇÃO
+       =========================== -->
+  <div class="modal-overlay" id="modal-confirmar">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Confirmar</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirmar-msg"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-confirmar-nao">Cancelar</button>
+        <button class="btn btn-danger" id="btn-confirmar-sim">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===========================
+       MODAL: VENDA FINALIZADA
+       =========================== -->
+  <div class="modal-overlay" id="modal-venda-ok">
+    <div class="modal modal-sm">
+      <div class="modal-header success-header">
+        <h2>✅ Venda Registrada!</h2>
+      </div>
+      <div class="modal-body" style="text-align:center; padding: 32px 24px;">
+        <div style="font-size: 56px; margin-bottom: 12px;">🎉</div>
+        <p style="font-size: 15px; color: var(--text-muted); margin-bottom: 8px;">Total cobrado:</p>
+        <p class="total-value" id="venda-ok-total" style="font-size: 36px; margin-bottom: 0;"></p>
+      </div>
+      <div class="modal-footer" style="justify-content: center;">
+        <button class="btn btn-primary btn-lg-modal" id="btn-nova-venda">Nova Venda</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===========================
+       TOAST NOTIFICATION
+       =========================== -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ===========================
+       ÁREA DE IMPRESSÃO (somente no print)
+       =========================== -->
+  <div id="print-area"></div>
+
+  <!-- Scripts -->
+  <script src="../node_modules/jsbarcode/dist/JsBarcode.all.min.js"></script>
+  <script src="../node_modules/jspdf/dist/jspdf.umd.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

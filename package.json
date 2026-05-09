@@ -1,0 +1,43 @@
+{
+  "name": "loja-bebe-pdv",
+  "version": "1.0.0",
+  "description": "Sistema PDV para Loja de Roupas de Bebê",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "jsbarcode": "^3.11.6",
+    "jspdf": "^2.5.1"
+  },
+  "devDependencies": {
+    "electron": "^29.1.0",
+    "electron-rebuild": "^3.2.9",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lojabebe.pdv",
+    "productName": "Loja Bebê PDV",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
+  }
+}
