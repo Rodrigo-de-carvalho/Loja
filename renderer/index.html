@@ -19,20 +19,19 @@
     </div>
     <ul class="nav-list">
       <li class="nav-item active" data-section="produtos">
-        <span class="nav-icon">📦</span>
-        <span>Produtos</span>
+        <span class="nav-icon">📦</span><span>Produtos</span>
       </li>
       <li class="nav-item" data-section="etiquetas">
-        <span class="nav-icon">🏷️</span>
-        <span>Etiquetas</span>
+        <span class="nav-icon">🏷️</span><span>Etiquetas</span>
       </li>
       <li class="nav-item" data-section="caixa">
-        <span class="nav-icon">🛒</span>
-        <span>Caixa</span>
+        <span class="nav-icon">🛒</span><span>Caixa</span>
       </li>
       <li class="nav-item" data-section="relatorios">
-        <span class="nav-icon">📊</span>
-        <span>Relatórios</span>
+        <span class="nav-icon">📊</span><span>Relatórios</span>
+      </li>
+      <li class="nav-item nav-admin" data-section="admin">
+        <span class="nav-icon">🔐</span><span>Administrador</span>
       </li>
     </ul>
     <div class="sidebar-footer">
@@ -40,21 +39,19 @@
     </div>
   </nav>
 
-  <!-- ===== MAIN CONTENT ===== -->
+  <!-- ===== MAIN ===== -->
   <main class="main">
 
-    <!-- ============================
-         SECTION: PRODUTOS
-         ============================ -->
+    <!-- ==============================
+         PRODUTOS
+         ============================== -->
     <section id="section-produtos" class="section active">
       <div class="page-header">
         <div>
           <h1 class="page-title">Produtos</h1>
           <p class="page-sub">Cadastro e gerenciamento do estoque</p>
         </div>
-        <button class="btn btn-primary" id="btn-novo-produto">
-          <span>+</span> Novo Produto
-        </button>
+        <button class="btn btn-primary" id="btn-novo-produto">+ Novo Produto</button>
       </div>
 
       <div class="toolbar">
@@ -71,15 +68,14 @@
             <tr>
               <th>Código de Barras</th>
               <th>Nome do Produto</th>
-              <th>Preço de Custo</th>
               <th>Preço de Venda</th>
-              <th>Margem</th>
+              <th>Estoque</th>
               <th>Ações</th>
             </tr>
           </thead>
           <tbody id="tbody-produtos">
             <tr>
-              <td colspan="6" class="empty-state">
+              <td colspan="5" class="empty-state">
                 <div class="empty-icon">📦</div>
                 <div>Nenhum produto cadastrado</div>
                 <div class="empty-hint">Clique em "Novo Produto" para começar</div>
@@ -90,29 +86,27 @@
       </div>
     </section>
 
-    <!-- ============================
-         SECTION: ETIQUETAS
-         ============================ -->
+    <!-- ==============================
+         ETIQUETAS
+         ============================== -->
     <section id="section-etiquetas" class="section">
       <div class="page-header">
         <div>
           <h1 class="page-title">Etiquetas</h1>
-          <p class="page-sub">Imprima etiquetas com código de barras para seus produtos</p>
+          <p class="page-sub">Imprima etiquetas com código de barras</p>
         </div>
-        <button class="btn btn-primary" id="btn-imprimir-etiquetas">
-          🖨️ Imprimir Etiquetas
-        </button>
+        <button class="btn btn-primary" id="btn-imprimir-etiquetas">🖨️ Imprimir</button>
       </div>
 
-      <div class="card" style="padding: 20px; margin-bottom: 20px;">
+      <div class="card" style="padding:20px; margin-bottom:20px;">
         <div class="etiquetas-form">
           <div class="form-group" style="flex:1;">
             <label>Produto</label>
             <select id="select-produto-etiqueta">
-              <option value="">— Selecione um produto —</option>
+              <option value="">— Selecione —</option>
             </select>
           </div>
-          <div class="form-group" style="width:120px;">
+          <div class="form-group" style="width:110px;">
             <label>Quantidade</label>
             <input type="number" id="input-qtd-etiqueta" value="1" min="1" max="100">
           </div>
@@ -122,16 +116,14 @@
         </div>
       </div>
 
-      <div id="etiquetas-lista-container" style="margin-bottom: 20px; display:none;">
+      <div id="etiquetas-lista-container" style="margin-bottom:20px; display:none;">
         <div class="card table-card">
           <div class="card-header-row">
-            <h3>Etiquetas selecionadas</h3>
+            <h3>Selecionados</h3>
             <button class="btn btn-sm btn-secondary" id="btn-limpar-etiquetas">Limpar tudo</button>
           </div>
           <table class="table">
-            <thead>
-              <tr><th>Produto</th><th>Quantidade</th><th></th></tr>
-            </thead>
+            <thead><tr><th>Produto</th><th>Quantidade</th><th></th></tr></thead>
             <tbody id="tbody-etiquetas-lista"></tbody>
           </table>
         </div>
@@ -143,45 +135,38 @@
           <span class="text-muted" id="total-etiquetas-info"></span>
         </div>
         <div id="etiquetas-preview" class="etiquetas-grid">
-          <div class="empty-state" style="padding: 40px 0;">
+          <div class="empty-state" style="padding:40px 0; width:100%;">
             <div class="empty-icon">🏷️</div>
-            <div>Adicione produtos para ver a pré-visualização</div>
+            <div>Adicione produtos para visualizar</div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ============================
-         SECTION: CAIXA
-         ============================ -->
+    <!-- ==============================
+         CAIXA
+         ============================== -->
     <section id="section-caixa" class="section">
       <div class="page-header">
         <div>
           <h1 class="page-title">Caixa</h1>
           <p class="page-sub" id="data-hoje"></p>
         </div>
-        <div class="venda-numero">
-          Venda <span id="num-venda-atual">#—</span>
-        </div>
+        <div class="venda-numero">Venda <span id="num-venda-atual">#—</span></div>
       </div>
 
       <div class="scanner-bar">
         <div class="scanner-input-wrap">
           <span class="scanner-icon">📷</span>
-          <input
-            type="text"
-            id="input-barcode"
+          <input type="text" id="input-barcode"
             placeholder="Digite ou leia o código de barras e pressione Enter..."
-            autocomplete="off"
-            autofocus
-          >
+            autocomplete="off" autofocus>
         </div>
         <button class="btn btn-secondary" id="btn-add-item">Adicionar</button>
-        <button class="btn btn-outline" id="btn-buscar-produto-nome">Buscar por nome</button>
+        <button class="btn btn-outline"   id="btn-buscar-produto-nome">Buscar por nome</button>
       </div>
 
       <div class="caixa-grid">
-        <!-- Cart -->
         <div class="card carrinho-card">
           <div class="card-header-row">
             <h3>🛒 Carrinho</h3>
@@ -191,15 +176,15 @@
             <thead>
               <tr>
                 <th>Produto</th>
-                <th style="width:120px; text-align:center;">Quantidade</th>
+                <th style="width:130px; text-align:center;">Quantidade</th>
                 <th style="width:110px;">Preço Unit.</th>
                 <th style="width:110px;">Subtotal</th>
-                <th style="width:50px;"></th>
+                <th style="width:46px;"></th>
               </tr>
             </thead>
             <tbody id="tbody-carrinho">
               <tr class="empty-row">
-                <td colspan="5" class="empty-state" style="padding: 48px 0;">
+                <td colspan="5" class="empty-state" style="padding:48px 0;">
                   <div class="empty-icon">🛒</div>
                   <div>Carrinho vazio</div>
                   <div class="empty-hint">Escaneie ou busque um produto</div>
@@ -209,32 +194,22 @@
           </table>
         </div>
 
-        <!-- Totals Panel -->
         <div class="totais-panel">
           <div class="card total-card">
             <div class="total-label">Total da Venda</div>
             <div class="total-value" id="total-venda">R$ 0,00</div>
           </div>
-
           <div class="card resumo-card">
             <div class="resumo-row">
-              <span>Itens:</span>
-              <strong id="resumo-itens">0</strong>
+              <span>Itens:</span><strong id="resumo-itens">0</strong>
             </div>
             <div class="resumo-row">
-              <span>Subtotal:</span>
-              <strong id="resumo-subtotal">R$ 0,00</strong>
+              <span>Subtotal:</span><strong id="resumo-subtotal">R$ 0,00</strong>
             </div>
           </div>
-
-          <button
-            class="btn btn-success btn-block"
-            id="btn-finalizar-venda"
-            disabled
-          >
+          <button class="btn btn-success btn-block" id="btn-finalizar-venda" disabled>
             ✅ Finalizar Venda
           </button>
-
           <button class="btn btn-danger-outline btn-block" id="btn-cancelar-venda">
             ✕ Cancelar Venda
           </button>
@@ -242,24 +217,23 @@
       </div>
     </section>
 
-    <!-- ============================
-         SECTION: RELATÓRIOS
-         ============================ -->
+    <!-- ==============================
+         RELATÓRIOS (operador)
+         ============================== -->
     <section id="section-relatorios" class="section">
       <div class="page-header">
         <div>
           <h1 class="page-title">Relatórios</h1>
-          <p class="page-sub">Acompanhe vendas e lucratividade</p>
+          <p class="page-sub">Acompanhe as vendas da loja</p>
         </div>
       </div>
 
       <div class="tabs-bar">
         <button class="tab-btn active" data-tab="hoje">📅 Vendas de Hoje</button>
         <button class="tab-btn" data-tab="mensal">📆 Histórico Mensal</button>
-        <button class="tab-btn" data-tab="lucro">💰 Lucro Mensal</button>
       </div>
 
-      <!-- TAB: HOJE -->
+      <!-- Hoje -->
       <div id="tab-hoje" class="tab-pane active">
         <div class="relatorio-toolbar">
           <h2 id="titulo-hoje">Vendas de Hoje</h2>
@@ -272,20 +246,14 @@
         <div class="card table-card">
           <table class="table">
             <thead>
-              <tr>
-                <th>Nº</th>
-                <th>Hora</th>
-                <th>Itens</th>
-                <th>Total</th>
-                <th>Detalhes</th>
-              </tr>
+              <tr><th>Nº</th><th>Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th>Ver</th></tr>
             </thead>
             <tbody id="tbody-hoje"></tbody>
           </table>
         </div>
       </div>
 
-      <!-- TAB: MENSAL -->
+      <!-- Mensal -->
       <div id="tab-mensal" class="tab-pane">
         <div class="relatorio-toolbar">
           <div class="date-picker-group">
@@ -293,52 +261,127 @@
             <select id="sel-ano-mensal"></select>
             <button class="btn btn-secondary" id="btn-buscar-mensal">Buscar</button>
           </div>
-          <div class="relatorio-actions">
-            <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
-          </div>
+          <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
         </div>
         <div class="stats-grid" id="stats-mensal"></div>
         <div class="card table-card">
           <table class="table">
             <thead>
-              <tr>
-                <th>Nº</th>
-                <th>Data/Hora</th>
-                <th>Itens</th>
-                <th>Total</th>
-                <th>Detalhes</th>
-              </tr>
+              <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th>Ver</th></tr>
             </thead>
             <tbody id="tbody-mensal"></tbody>
           </table>
         </div>
       </div>
+    </section>
 
-      <!-- TAB: LUCRO -->
-      <div id="tab-lucro" class="tab-pane">
-        <div class="relatorio-toolbar">
-          <div class="date-picker-group">
-            <select id="sel-mes-lucro"></select>
-            <select id="sel-ano-lucro"></select>
-            <button class="btn btn-secondary" id="btn-buscar-lucro">Buscar</button>
+    <!-- ==============================
+         ADMINISTRADOR
+         ============================== -->
+    <section id="section-admin" class="section">
+
+      <!-- Login wall -->
+      <div id="admin-login-wall">
+        <div class="admin-login-card">
+          <div class="admin-lock-icon">🔐</div>
+          <h2>Área do Administrador</h2>
+          <p class="admin-login-sub">Acesso restrito ao proprietário da loja</p>
+
+          <div class="form-group">
+            <label>E-mail</label>
+            <input type="email" id="admin-email" placeholder="seu@email.com" autocomplete="off">
           </div>
-          <div class="relatorio-actions">
-            <button class="btn btn-export" id="btn-export-lucro">📄 Exportar PDF</button>
+          <div class="form-group">
+            <label>Senha</label>
+            <input type="password" id="admin-senha" placeholder="••••••••" autocomplete="off">
+          </div>
+          <p class="admin-error" id="admin-error">E-mail ou senha incorretos.</p>
+          <button class="btn btn-primary btn-block" id="btn-admin-login">Entrar</button>
+        </div>
+      </div>
+
+      <!-- Painel admin (visível após login) -->
+      <div id="admin-painel" style="display:none;">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">🔐 Painel do Administrador</h1>
+            <p class="page-sub">Acesso restrito — você está autenticado como proprietário</p>
+          </div>
+          <button class="btn btn-secondary" id="btn-admin-logout">Sair da conta admin</button>
+        </div>
+
+        <div class="tabs-bar">
+          <button class="tab-btn active" data-admin-tab="custos">💰 Preços de Custo</button>
+          <button class="tab-btn" data-admin-tab="estoque">📦 Estoque</button>
+          <button class="tab-btn" data-admin-tab="lucro">📊 Lucro Mensal</button>
+        </div>
+
+        <!-- Custos -->
+        <div id="admin-tab-custos" class="tab-pane active">
+          <p class="page-sub" style="margin-bottom:16px;">
+            Produtos com <span class="badge-sem-custo">sem custo</span> ainda não têm preço de custo definido.
+          </p>
+          <div class="card table-card">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Preço de Venda</th>
+                  <th>Preço de Custo</th>
+                  <th>Margem</th>
+                  <th style="width:160px;">Atualizar custo</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-admin-custos"></tbody>
+            </table>
           </div>
         </div>
-        <div class="stats-grid" id="stats-lucro"></div>
-        <div class="card" id="lucro-chart-area" style="padding:24px; display:none;">
-          <h3 style="margin-bottom:16px;">Composição</h3>
-          <div id="lucro-bar-visual"></div>
+
+        <!-- Estoque -->
+        <div id="admin-tab-estoque" class="tab-pane">
+          <p class="page-sub" style="margin-bottom:16px;">
+            Defina a quantidade em estoque de cada produto. Produtos com
+            <span class="badge-estoque-baixo">estoque baixo</span> estão destacados.
+          </p>
+          <div class="card table-card">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Código</th>
+                  <th>Estoque atual</th>
+                  <th style="width:200px;">Nova quantidade</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-admin-estoque"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Lucro -->
+        <div id="admin-tab-lucro" class="tab-pane">
+          <div class="relatorio-toolbar">
+            <div class="date-picker-group">
+              <select id="admin-sel-mes-lucro"></select>
+              <select id="admin-sel-ano-lucro"></select>
+              <button class="btn btn-secondary" id="admin-btn-buscar-lucro">Buscar</button>
+            </div>
+            <button class="btn btn-export" id="admin-btn-export-lucro">📄 Exportar PDF</button>
+          </div>
+          <div class="stats-grid" id="admin-stats-lucro"></div>
+          <div class="card" id="admin-lucro-chart" style="padding:24px; display:none;">
+            <h3 style="margin-bottom:16px;">Composição da Receita</h3>
+            <div id="admin-lucro-bar"></div>
+          </div>
         </div>
       </div>
     </section>
 
-  </main><!-- /.main -->
+  </main>
 
-  <!-- ===========================
-       MODAL: PRODUTO
-       =========================== -->
+  <!-- ================================
+       MODAL: NOVO / EDITAR PRODUTO
+       ================================ -->
   <div class="modal-overlay" id="modal-produto">
     <div class="modal">
       <div class="modal-header">
@@ -348,24 +391,16 @@
       <form id="form-produto" novalidate>
         <div class="modal-body">
           <div class="form-group">
-            <label for="produto-nome">Nome do Produto <span class="required">*</span></label>
+            <label>Nome do Produto <span class="required">*</span></label>
             <input type="text" id="produto-nome" placeholder="Ex: Body Manga Curta Azul P" required>
           </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label for="produto-custo">Preço de Custo (R$) <span class="required">*</span></label>
-              <input type="number" id="produto-custo" placeholder="0,00" min="0" step="0.01" required>
-            </div>
-            <div class="form-group">
-              <label for="produto-venda">Preço de Venda (R$) <span class="required">*</span></label>
-              <input type="number" id="produto-venda" placeholder="0,00" min="0" step="0.01" required>
-            </div>
+          <div class="form-group">
+            <label>Preço de Venda (R$) <span class="required">*</span></label>
+            <input type="number" id="produto-venda" placeholder="0,00" min="0" step="0.01" required>
           </div>
-          <div class="form-group" id="grupo-margem-info" style="display:none;">
-            <div class="margem-preview">
-              <span>Margem de lucro:</span>
-              <strong id="margem-preview-valor" class="positive">0%</strong>
-            </div>
+          <div class="form-group">
+            <label>Estoque inicial</label>
+            <input type="number" id="produto-estoque" placeholder="0" min="0" value="0">
           </div>
           <div class="form-group">
             <label>Código de Barras</label>
@@ -377,15 +412,53 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-close="modal-produto">Cancelar</button>
-          <button type="submit" class="btn btn-primary" id="btn-salvar-produto">Salvar Produto</button>
+          <button type="submit" class="btn btn-primary">Salvar Produto</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- ===========================
-       MODAL: BUSCAR POR NOME (CAIXA)
-       =========================== -->
+  <!-- ================================
+       MODAL: PAGAMENTO
+       ================================ -->
+  <div class="modal-overlay" id="modal-pagamento">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Forma de Pagamento</h2>
+      </div>
+      <div class="modal-body" style="gap:12px;">
+        <div class="pagamento-total-row">
+          Total: <strong id="pagamento-total-valor"></strong>
+        </div>
+        <p style="font-size:13px; color:var(--text-muted);">Selecione a forma de pagamento:</p>
+        <div class="pagamento-grid">
+          <button class="pagamento-btn" data-pag="pix">
+            <span class="pag-icon">📱</span>
+            <span>PIX</span>
+          </button>
+          <button class="pagamento-btn" data-pag="debito">
+            <span class="pag-icon">💳</span>
+            <span>Débito</span>
+          </button>
+          <button class="pagamento-btn" data-pag="credito">
+            <span class="pag-icon">💳</span>
+            <span>Crédito</span>
+          </button>
+          <button class="pagamento-btn" data-pag="dinheiro">
+            <span class="pag-icon">💵</span>
+            <span>Dinheiro</span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-pagamento">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: BUSCAR PRODUTO (CAIXA)
+       ================================ -->
   <div class="modal-overlay" id="modal-buscar-nome">
     <div class="modal">
       <div class="modal-header">
@@ -397,9 +470,9 @@
           <span class="search-icon">🔍</span>
           <input type="text" id="input-busca-caixa" placeholder="Digite o nome do produto...">
         </div>
-        <div class="card table-card" style="max-height: 320px; overflow-y:auto;">
+        <div class="card table-card" style="max-height:320px; overflow-y:auto;">
           <table class="table" id="tabela-busca-caixa">
-            <thead><tr><th>Nome</th><th>Código</th><th>Preço</th><th></th></tr></thead>
+            <thead><tr><th>Nome</th><th>Código</th><th>Preço</th><th>Estoque</th><th></th></tr></thead>
             <tbody id="tbody-busca-caixa"></tbody>
           </table>
         </div>
@@ -410,9 +483,9 @@
     </div>
   </div>
 
-  <!-- ===========================
+  <!-- ================================
        MODAL: DETALHES DA VENDA
-       =========================== -->
+       ================================ -->
   <div class="modal-overlay" id="modal-detalhes-venda">
     <div class="modal modal-lg">
       <div class="modal-header">
@@ -422,9 +495,7 @@
       <div class="modal-body">
         <div class="card table-card">
           <table class="table" id="tabela-detalhes-venda">
-            <thead>
-              <tr><th>Produto</th><th>Qtd</th><th>Preço Unit.</th><th>Subtotal</th></tr>
-            </thead>
+            <thead><tr><th>Produto</th><th>Qtd</th><th>Preço Unit.</th><th>Subtotal</th></tr></thead>
             <tbody id="tbody-detalhes-venda"></tbody>
           </table>
         </div>
@@ -436,51 +507,67 @@
     </div>
   </div>
 
-  <!-- ===========================
-       MODAL: CONFIRMAR AÇÃO
-       =========================== -->
+  <!-- ================================
+       MODAL: CONFIRMAR
+       ================================ -->
   <div class="modal-overlay" id="modal-confirmar">
     <div class="modal modal-sm">
-      <div class="modal-header">
-        <h2>Confirmar</h2>
-      </div>
-      <div class="modal-body">
-        <p id="confirmar-msg"></p>
-      </div>
+      <div class="modal-header"><h2>Confirmar</h2></div>
+      <div class="modal-body"><p id="confirmar-msg"></p></div>
       <div class="modal-footer">
         <button class="btn btn-secondary" id="btn-confirmar-nao">Cancelar</button>
-        <button class="btn btn-danger" id="btn-confirmar-sim">Confirmar</button>
+        <button class="btn btn-danger"    id="btn-confirmar-sim">Confirmar</button>
       </div>
     </div>
   </div>
 
-  <!-- ===========================
+  <!-- ================================
        MODAL: VENDA FINALIZADA
-       =========================== -->
+       ================================ -->
   <div class="modal-overlay" id="modal-venda-ok">
     <div class="modal modal-sm">
       <div class="modal-header success-header">
         <h2>✅ Venda Registrada!</h2>
       </div>
-      <div class="modal-body" style="text-align:center; padding: 32px 24px;">
-        <div style="font-size: 56px; margin-bottom: 12px;">🎉</div>
-        <p style="font-size: 15px; color: var(--text-muted); margin-bottom: 8px;">Total cobrado:</p>
-        <p class="total-value" id="venda-ok-total" style="font-size: 36px; margin-bottom: 0;"></p>
+      <div class="modal-body" style="text-align:center; padding:32px 24px;">
+        <div style="font-size:52px; margin-bottom:12px;">🎉</div>
+        <p style="font-size:14px; color:var(--text-muted); margin-bottom:4px;">Total cobrado:</p>
+        <p class="total-value" id="venda-ok-total" style="font-size:34px; margin-bottom:8px;"></p>
+        <p class="pagamento-label-ok" id="venda-ok-pagamento"></p>
       </div>
-      <div class="modal-footer" style="justify-content: center;">
+      <div class="modal-footer" style="justify-content:center;">
         <button class="btn btn-primary btn-lg-modal" id="btn-nova-venda">Nova Venda</button>
       </div>
     </div>
   </div>
 
-  <!-- ===========================
-       TOAST NOTIFICATION
-       =========================== -->
+  <!-- ================================
+       MODAL: EDITAR CUSTO (ADMIN)
+       ================================ -->
+  <div class="modal-overlay" id="modal-editar-custo">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Definir Preço de Custo</h2>
+        <button class="modal-close" data-close="modal-editar-custo">×</button>
+      </div>
+      <div class="modal-body">
+        <p id="editar-custo-nome" style="font-weight:600; margin-bottom:12px;"></p>
+        <div class="form-group">
+          <label>Preço de Custo (R$)</label>
+          <input type="number" id="editar-custo-valor" min="0" step="0.01" placeholder="0,00">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-editar-custo">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-custo">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
   <div id="toast" class="toast"></div>
 
-  <!-- ===========================
-       ÁREA DE IMPRESSÃO (somente no print)
-       =========================== -->
+  <!-- Área de impressão (somente no @media print) -->
   <div id="print-area"></div>
 
   <!-- Scripts -->

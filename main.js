@@ -1,15 +1,12 @@
 'use strict'
 
 const { app, BrowserWindow, ipcMain, Menu } = require('electron')
-const path    = require('path')
+const path     = require('path')
 const Database = require('./database')
 
 let mainWindow
 let db
 
-/* ============================================================
-   JANELA PRINCIPAL
-   ============================================================ */
 function createWindow() {
   mainWindow = new BrowserWindow({
     width:           1280,
@@ -28,78 +25,43 @@ function createWindow() {
     show: false
   })
 
-  // Sem barra de menu nativa
   Menu.setApplicationMenu(null)
-
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'))
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
-    if (!app.isPackaged) {
-      mainWindow.webContents.openDevTools({ mode: 'detach' })
-    }
+    if (!app.isPackaged) mainWindow.webContents.openDevTools({ mode: 'detach' })
   })
 
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
-/* ============================================================
-   HANDLERS IPC
-   ============================================================ */
 function registrarHandlers() {
-  /* ---- Produtos ---- */
-  ipcMain.handle('produtos:listar', () =>
-    db.listarProdutos()
-  )
+  /* Produtos */
+  ipcMain.handle('produtos:listar',          ()           => db.listarProdutos())
+  ipcMain.handle('produtos:criar',           (_, d)       => db.criarProduto(d))
+  ipcMain.handle('produtos:atualizar',       (_, id, d)   => db.atualizarProduto(id, d))
+  ipcMain.handle('produtos:deletar',         (_, id)      => db.deletarProduto(id))
+  ipcMain.handle('produtos:buscarPorCodigo', (_, c)       => db.buscarPorCodigo(c))
 
-  ipcMain.handle('produtos:criar', (_, dados) =>
-    db.criarProduto(dados)
-  )
+  /* Admin — protegido no nível do banco */
+  ipcMain.handle('admin:verificar',          (_, eH, sH)  => db.verificarAdmin(eH, sH))
+  ipcMain.handle('admin:atualizarCusto',     (_, id, v)   => db.atualizarCusto(id, v))
+  ipcMain.handle('admin:atualizarEstoque',   (_, id, v)   => db.atualizarEstoque(id, v))
 
-  ipcMain.handle('produtos:atualizar', (_, id, dados) =>
-    db.atualizarProduto(id, dados)
-  )
-
-  ipcMain.handle('produtos:deletar', (_, id) =>
-    db.deletarProduto(id)
-  )
-
-  ipcMain.handle('produtos:buscarPorCodigo', (_, codigo) =>
-    db.buscarPorCodigo(codigo)
-  )
-
-  /* ---- Vendas ---- */
-  ipcMain.handle('vendas:finalizar', (_, dados) =>
-    db.finalizarVenda(dados)
-  )
-
-  ipcMain.handle('vendas:hoje', () =>
-    db.vendasHoje()
-  )
-
-  ipcMain.handle('vendas:mensais', (_, mes, ano) =>
-    db.vendasMensais(mes, ano)
-  )
-
-  ipcMain.handle('vendas:lucro', (_, mes, ano) =>
-    db.lucroMensal(mes, ano)
-  )
-
-  ipcMain.handle('vendas:detalhes', (_, id) =>
-    db.detalhesVenda(id)
-  )
+  /* Vendas */
+  ipcMain.handle('vendas:finalizar',  (_, d)       => db.finalizarVenda(d))
+  ipcMain.handle('vendas:hoje',       ()           => db.vendasHoje())
+  ipcMain.handle('vendas:mensais',    (_, m, a)    => db.vendasMensais(m, a))
+  ipcMain.handle('vendas:lucro',      (_, m, a)    => db.lucroMensal(m, a))
+  ipcMain.handle('vendas:detalhes',   (_, id)      => db.detalhesVenda(id))
 }
 
-/* ============================================================
-   CICLO DE VIDA DO APP
-   ============================================================ */
 app.whenReady().then(() => {
   const dbPath = path.join(app.getPath('userData'), 'loja-bebe.db')
   db = new Database(dbPath)
-
   registrarHandlers()
   createWindow()
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -110,6 +72,4 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
-  if (db) db.fechar()
-})
+app.on('before-quit', () => { if (db) db.fechar() })

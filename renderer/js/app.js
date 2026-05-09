@@ -1,141 +1,111 @@
 'use strict'
 
-/* ============================================================
-   API BRIDGE (from preload.js via contextBridge)
-   ============================================================ */
 const api = window.electronAPI
 
 /* ============================================================
-   STATE
+   ESTADO
    ============================================================ */
 let todosProdutos   = []
 let carrinho        = []
 let produtoEditId   = null
 let codigoAtual     = ''
 let confirmCallback = null
-let relMesHoje      = null   // current report data
+let isAdmin         = false
+let adminEditCustoId= null
 
 /* ============================================================
    UTILS
    ============================================================ */
-function fmt(valor) {
-  return Number(valor || 0).toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-}
-
-function fmtMoeda(valor) { return `R$ ${fmt(valor)}` }
-
-function fmtData(str) {
-  if (!str) return '—'
-  const d = new Date(str.replace(' ', 'T'))
-  return isNaN(d) ? str : d.toLocaleDateString('pt-BR')
-}
-
-function fmtHora(str) {
-  if (!str) return '—'
-  const d = new Date(str.replace(' ', 'T'))
-  return isNaN(d) ? str : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-}
-
-function fmtDataHora(str) {
-  if (!str) return '—'
-  const d = new Date(str.replace(' ', 'T'))
-  return isNaN(d) ? str : `${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-}
-
-function margem(custo, venda) {
-  if (!custo || custo === 0) return '∞'
-  return (((venda - custo) / custo) * 100).toFixed(1)
-}
+function fmt(v)       { return Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) }
+function fmtMoeda(v)  { return `R$ ${fmt(v)}` }
+function fmtHora(s)   { if(!s)return'—'; const d=new Date(s.replace(' ','T')); return isNaN(d)?s:d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) }
+function fmtDH(s)     { if(!s)return'—'; const d=new Date(s.replace(' ','T')); return isNaN(d)?s:`${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` }
+function margem(c,v)  { if(!c||c===0)return'—'; return (((v-c)/c)*100).toFixed(1)+'%' }
+function escHtml(s)   { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
 
 function gerarCodigoBarras() {
-  const ts = Date.now().toString()
-  const rnd = Math.floor(Math.random() * 10000).toString().padStart(4, '0')
-  return `${ts.slice(-9)}${rnd}`
+  return `${Date.now().toString().slice(-9)}${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`
 }
 
-function renderBarcode(selector, codigo, opts = {}) {
+function renderBarcode(selector, codigo, opts={}) {
   try {
     JsBarcode(selector, String(codigo), {
-      format:       'CODE128',
-      width:        opts.width   || 1.8,
-      height:       opts.height  || 50,
-      displayValue: opts.displayValue !== false,
-      fontSize:     opts.fontSize || 11,
-      margin:       opts.margin  !== undefined ? opts.margin : 6,
-      background:   opts.background || '#ffffff',
-      lineColor:    opts.lineColor  || '#000000'
+      format:'CODE128', width:opts.width||1.8, height:opts.height||50,
+      displayValue:opts.displayValue!==false, fontSize:opts.fontSize||11,
+      margin:opts.margin!==undefined?opts.margin:6,
+      background:'#ffffff', lineColor:'#000000'
     })
-  } catch(e) {
-    console.warn('Barcode error:', e)
-  }
+  } catch(e) { console.warn('Barcode:', e) }
+}
+
+const PAGAMENTO_LABEL = {
+  pix:      '📱 PIX',
+  debito:   '💳 Débito',
+  credito:  '💳 Crédito',
+  dinheiro: '💵 Dinheiro'
+}
+
+const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                   'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+
+/* ============================================================
+   CRYPTO — hash SHA-256 usando Web Crypto API (Electron/Chromium)
+   ============================================================ */
+async function hashStr(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('')
 }
 
 /* ============================================================
    TOAST
    ============================================================ */
 let toastTimer = null
-
-function toast(msg, type = '') {
+function toast(msg, type='') {
   const el = document.getElementById('toast')
   el.textContent = msg
-  el.className = `toast ${type ? 'toast-' + type : ''}`
+  el.className = `toast${type?' toast-'+type:''}`
   el.classList.add('show')
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => el.classList.remove('show'), 3200)
+  toastTimer = setTimeout(()=>el.classList.remove('show'), 3200)
 }
 
 /* ============================================================
    MODAL
    ============================================================ */
-function openModal(id) {
-  document.getElementById(id).classList.add('open')
-}
+function openModal(id)  { document.getElementById(id).classList.add('open') }
+function closeModal(id) { document.getElementById(id).classList.remove('open') }
 
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open')
-}
-
-// Generic close buttons via data-close attribute
-document.querySelectorAll('[data-close]').forEach(btn => {
+document.querySelectorAll('[data-close]').forEach(btn =>
   btn.addEventListener('click', () => closeModal(btn.dataset.close))
-})
-
-// Close on overlay click
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) closeModal(overlay.id)
-  })
-})
+)
+document.querySelectorAll('.modal-overlay').forEach(overlay =>
+  overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(overlay.id) })
+)
 
 /* ============================================================
-   CONFIRM DIALOG
+   CONFIRMAR
    ============================================================ */
 function confirmar(msg, cb) {
   document.getElementById('confirmar-msg').textContent = msg
   confirmCallback = cb
   openModal('modal-confirmar')
 }
-
-document.getElementById('btn-confirmar-nao').addEventListener('click', () => closeModal('modal-confirmar'))
-document.getElementById('btn-confirmar-sim').addEventListener('click', () => {
+document.getElementById('btn-confirmar-nao').addEventListener('click', ()=>closeModal('modal-confirmar'))
+document.getElementById('btn-confirmar-sim').addEventListener('click', ()=>{
   closeModal('modal-confirmar')
-  if (confirmCallback) confirmCallback()
+  if(confirmCallback) confirmCallback()
 })
 
 /* ============================================================
-   NAVIGATION
+   NAVEGAÇÃO
    ============================================================ */
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => navigateTo(item.dataset.section))
-})
+document.querySelectorAll('.nav-item').forEach(item =>
+  item.addEventListener('click', ()=>navigateTo(item.dataset.section))
+)
 
 function navigateTo(section) {
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'))
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'))
-
   document.querySelector(`.nav-item[data-section="${section}"]`).classList.add('active')
   document.getElementById(`section-${section}`).classList.add('active')
 
@@ -143,23 +113,22 @@ function navigateTo(section) {
   if (section === 'etiquetas')  preencherSelectEtiquetas()
   if (section === 'caixa')      focusCaixa()
   if (section === 'relatorios') carregarHoje()
+  if (section === 'admin')      renderAdminState()
 }
 
 /* ============================================================
-   CLOCK
+   RELÓGIO
    ============================================================ */
 function iniciarRelogio() {
-  function tick() {
-    const d = new Date()
-    const txt = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    document.getElementById('clock').textContent = txt
+  const tick = () => {
+    document.getElementById('clock').textContent =
+      new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
   }
-  tick()
-  setInterval(tick, 1000)
+  tick(); setInterval(tick, 1000)
 }
 
 /* ============================================================
-   ==================  SEÇÃO: PRODUTOS  ==================
+   PRODUTOS
    ============================================================ */
 async function carregarProdutos() {
   todosProdutos = await api.listarProdutos()
@@ -167,57 +136,47 @@ async function carregarProdutos() {
 }
 
 function renderProdutos(lista) {
-  const tbody = document.getElementById('tbody-produtos')
-  const count = document.getElementById('contador-produtos')
-  count.textContent = `${lista.length} produto${lista.length !== 1 ? 's' : ''}`
+  document.getElementById('contador-produtos').textContent =
+    `${lista.length} produto${lista.length!==1?'s':''}`
 
-  if (lista.length === 0) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="6" class="empty-state">
-          <div class="empty-icon">📦</div>
-          <div>Nenhum produto encontrado</div>
-          <div class="empty-hint">Clique em "Novo Produto" para começar</div>
-        </td>
-      </tr>`
+  const tbody = document.getElementById('tbody-produtos')
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">
+      <div class="empty-icon">📦</div>
+      <div>Nenhum produto encontrado</div>
+      <div class="empty-hint">Clique em "Novo Produto" para começar</div>
+    </td></tr>`
     return
   }
 
   tbody.innerHTML = lista.map(p => {
-    const m = margem(p.preco_custo, p.preco_venda)
-    const cls = parseFloat(m) >= 0 ? 'positive' : 'negative'
+    const estBadge = p.estoque <= 0
+      ? `<span class="badge-estoque-baixo">0</span>`
+      : p.estoque <= 3
+        ? `<span class="badge-estoque-aviso">${p.estoque}</span>`
+        : `<span class="badge-estoque-ok">${p.estoque}</span>`
+
     return `
       <tr>
         <td><code>${p.codigo_barras}</code></td>
         <td><strong>${escHtml(p.nome)}</strong></td>
-        <td>${fmtMoeda(p.preco_custo)}</td>
         <td>${fmtMoeda(p.preco_venda)}</td>
-        <td class="${cls}">${m}%</td>
+        <td>${estBadge}</td>
         <td>
-          <div style="display:flex; gap:6px;">
+          <div style="display:flex;gap:6px;">
             <button class="btn btn-sm btn-secondary" onclick="abrirEditarProduto(${p.id})">✏️ Editar</button>
-            <button class="btn btn-sm btn-danger"    onclick="deletarProduto(${p.id}, '${escHtml(p.nome).replace(/'/g,"\\'")}')">🗑️</button>
+            <button class="btn btn-sm btn-danger"    onclick="deletarProduto(${p.id},'${escHtml(p.nome).replace(/'/g,"\\'")}')">🗑️</button>
           </div>
         </td>
       </tr>`
   }).join('')
 }
 
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/* Busca */
 document.getElementById('input-busca-produto').addEventListener('input', e => {
   const q = e.target.value.toLowerCase()
-  const filtrado = todosProdutos.filter(p =>
+  renderProdutos(todosProdutos.filter(p =>
     p.nome.toLowerCase().includes(q) || p.codigo_barras.includes(q)
-  )
-  renderProdutos(filtrado)
+  ))
 })
 
 /* Novo produto */
@@ -225,342 +184,234 @@ document.getElementById('btn-novo-produto').addEventListener('click', () => {
   produtoEditId = null
   document.getElementById('modal-produto-titulo').textContent = 'Novo Produto'
   document.getElementById('form-produto').reset()
-  document.getElementById('grupo-margem-info').style.display = 'none'
-
   codigoAtual = gerarCodigoBarras()
-  renderBarcode('#barcode-preview', codigoAtual, { height: 50, fontSize: 11 })
+  renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
-
   openModal('modal-produto')
-  setTimeout(() => document.getElementById('produto-nome').focus(), 80)
+  setTimeout(()=>document.getElementById('produto-nome').focus(), 80)
 })
 
-/* Atualizar pré-visualização de margem */
-function atualizarMargemPreview() {
-  const custo = parseFloat(document.getElementById('produto-custo').value) || 0
-  const venda = parseFloat(document.getElementById('produto-venda').value) || 0
-
-  if (custo > 0 && venda > 0) {
-    document.getElementById('grupo-margem-info').style.display = 'block'
-    const m = margem(custo, venda)
-    const el = document.getElementById('margem-preview-valor')
-    el.textContent = `${m}%`
-    el.className = parseFloat(m) >= 0 ? 'positive' : 'negative'
-  } else {
-    document.getElementById('grupo-margem-info').style.display = 'none'
-  }
-}
-
-document.getElementById('produto-custo').addEventListener('input', atualizarMargemPreview)
-document.getElementById('produto-venda').addEventListener('input', atualizarMargemPreview)
-
-/* Abrir modal de edição */
 function abrirEditarProduto(id) {
-  const p = todosProdutos.find(x => x.id === id)
-  if (!p) return
-
+  const p = todosProdutos.find(x=>x.id===id); if(!p) return
   produtoEditId = id
   document.getElementById('modal-produto-titulo').textContent = 'Editar Produto'
-  document.getElementById('produto-nome').value   = p.nome
-  document.getElementById('produto-custo').value  = p.preco_custo
-  document.getElementById('produto-venda').value  = p.preco_venda
-
+  document.getElementById('produto-nome').value    = p.nome
+  document.getElementById('produto-venda').value   = p.preco_venda
+  document.getElementById('produto-estoque').value = p.estoque
   codigoAtual = p.codigo_barras
-  renderBarcode('#barcode-preview', codigoAtual, { height: 50, fontSize: 11 })
+  renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
-  atualizarMargemPreview()
-
   openModal('modal-produto')
-  setTimeout(() => document.getElementById('produto-nome').focus(), 80)
+  setTimeout(()=>document.getElementById('produto-nome').focus(), 80)
 }
 
-/* Salvar produto */
 document.getElementById('form-produto').addEventListener('submit', async e => {
   e.preventDefault()
-
-  const nome       = document.getElementById('produto-nome').value.trim()
-  const preco_custo = parseFloat(document.getElementById('produto-custo').value)
+  const nome      = document.getElementById('produto-nome').value.trim()
   const preco_venda = parseFloat(document.getElementById('produto-venda').value)
+  const estoque   = parseInt(document.getElementById('produto-estoque').value) || 0
 
-  if (!nome) {
-    toast('Informe o nome do produto.', 'error')
-    document.getElementById('produto-nome').classList.add('input-error')
-    return
-  }
-  if (isNaN(preco_custo) || preco_custo < 0) {
-    toast('Preço de custo inválido.', 'error')
-    return
-  }
-  if (isNaN(preco_venda) || preco_venda <= 0) {
-    toast('Preço de venda inválido.', 'error')
-    return
-  }
-
-  document.getElementById('produto-nome').classList.remove('input-error')
+  if (!nome)                        { toast('Informe o nome do produto.','error'); return }
+  if (isNaN(preco_venda)||preco_venda<=0) { toast('Preço de venda inválido.','error'); return }
 
   try {
     if (produtoEditId) {
-      await api.atualizarProduto(produtoEditId, { nome, preco_custo, preco_venda })
-      toast('Produto atualizado com sucesso!', 'success')
+      await api.atualizarProduto(produtoEditId, { nome, preco_venda })
+      // Atualiza estoque via admin handler para manter a regra
+      await api.adminAtualizarEstoque(produtoEditId, estoque)
+      toast('Produto atualizado!', 'success')
     } else {
-      await api.criarProduto({ nome, preco_custo, preco_venda, codigo_barras: codigoAtual })
-      toast('Produto cadastrado com sucesso!', 'success')
+      await api.criarProduto({ nome, preco_venda, codigo_barras: codigoAtual, estoque })
+      toast('Produto cadastrado!', 'success')
     }
     closeModal('modal-produto')
     await carregarProdutos()
-    // atualiza select de etiquetas
     preencherSelectEtiquetas()
-  } catch(err) {
-    toast(`Erro ao salvar: ${err.message}`, 'error')
-  }
+  } catch(err) { toast(`Erro: ${err.message}`, 'error') }
 })
 
-/* Deletar produto */
 async function deletarProduto(id, nome) {
   confirmar(`Excluir o produto "${nome}"? Esta ação não pode ser desfeita.`, async () => {
     try {
       await api.deletarProduto(id)
       toast('Produto excluído.', 'success')
       await carregarProdutos()
-    } catch(err) {
-      toast(`Erro ao excluir: ${err.message}`, 'error')
-    }
+    } catch(err) { toast(`Erro: ${err.message}`, 'error') }
   })
 }
 
 /* ============================================================
-   ==================  SEÇÃO: ETIQUETAS  ==================
+   ETIQUETAS
    ============================================================ */
-let etiquetasSel = []  // { produto, quantidade }
+let etiquetasSel = []
 
 function preencherSelectEtiquetas() {
   const sel = document.getElementById('select-produto-etiqueta')
   const val = sel.value
-  sel.innerHTML = '<option value="">— Selecione um produto —</option>' +
-    todosProdutos.map(p =>
-      `<option value="${p.id}">${escHtml(p.nome)}</option>`
-    ).join('')
+  sel.innerHTML = '<option value="">— Selecione —</option>' +
+    todosProdutos.map(p=>`<option value="${p.id}">${escHtml(p.nome)}</option>`).join('')
   if (val) sel.value = val
 }
 
 document.getElementById('btn-add-etiqueta').addEventListener('click', () => {
   const prodId = parseInt(document.getElementById('select-produto-etiqueta').value)
   const qtd    = parseInt(document.getElementById('input-qtd-etiqueta').value) || 1
-
-  if (!prodId) { toast('Selecione um produto.', 'warn'); return }
-
-  const prod = todosProdutos.find(p => p.id === prodId)
-  if (!prod)  { toast('Produto não encontrado.', 'error'); return }
-
-  const existe = etiquetasSel.find(e => e.produto.id === prodId)
-  if (existe) {
-    existe.quantidade += qtd
-  } else {
-    etiquetasSel.push({ produto: prod, quantidade: qtd })
-  }
-
+  if (!prodId) { toast('Selecione um produto.','warn'); return }
+  const prod = todosProdutos.find(p=>p.id===prodId)
+  if (!prod) { toast('Produto não encontrado.','error'); return }
+  const existe = etiquetasSel.find(e=>e.produto.id===prodId)
+  existe ? (existe.quantidade += qtd) : etiquetasSel.push({produto:prod, quantidade:qtd})
   renderEtiquetasLista()
   renderEtiquetasPreview()
 })
 
-document.getElementById('btn-limpar-etiquetas').addEventListener('click', () => {
-  etiquetasSel = []
-  renderEtiquetasLista()
-  renderEtiquetasPreview()
+document.getElementById('btn-limpar-etiquetas').addEventListener('click', ()=>{
+  etiquetasSel=[]; renderEtiquetasLista(); renderEtiquetasPreview()
 })
 
 function renderEtiquetasLista() {
   const container = document.getElementById('etiquetas-lista-container')
-  const tbody     = document.getElementById('tbody-etiquetas-lista')
-
-  if (etiquetasSel.length === 0) {
-    container.style.display = 'none'
-    return
-  }
-
+  if (!etiquetasSel.length) { container.style.display='none'; return }
   container.style.display = 'block'
-  tbody.innerHTML = etiquetasSel.map((e, i) => `
+  document.getElementById('tbody-etiquetas-lista').innerHTML = etiquetasSel.map((e,i)=>`
     <tr>
       <td>${escHtml(e.produto.nome)}</td>
       <td>${e.quantidade}</td>
-      <td>
-        <button class="btn btn-sm btn-danger" onclick="removerEtiqueta(${i})">Remover</button>
-      </td>
-    </tr>
-  `).join('')
+      <td><button class="btn btn-sm btn-danger" onclick="removerEtiqueta(${i})">Remover</button></td>
+    </tr>`).join('')
 }
 
-function removerEtiqueta(idx) {
-  etiquetasSel.splice(idx, 1)
-  renderEtiquetasLista()
-  renderEtiquetasPreview()
-}
+function removerEtiqueta(idx) { etiquetasSel.splice(idx,1); renderEtiquetasLista(); renderEtiquetasPreview() }
 
 function renderEtiquetasPreview() {
   const preview   = document.getElementById('etiquetas-preview')
   const printArea = document.getElementById('print-area')
   const infoEl    = document.getElementById('total-etiquetas-info')
 
-  if (etiquetasSel.length === 0) {
-    const html = `
-      <div class="empty-state" style="padding: 40px 0; width:100%;">
-        <div class="empty-icon">🏷️</div>
-        <div>Adicione produtos para ver a pré-visualização</div>
-      </div>`
-    preview.innerHTML = html
+  if (!etiquetasSel.length) {
+    preview.innerHTML = `<div class="empty-state" style="padding:40px 0;width:100%;"><div class="empty-icon">🏷️</div><div>Adicione produtos para visualizar</div></div>`
     printArea.innerHTML = ''
     infoEl.textContent = ''
     return
   }
 
-  const totalEtqs = etiquetasSel.reduce((s, e) => s + e.quantidade, 0)
-  infoEl.textContent = `${totalEtqs} etiqueta${totalEtqs !== 1 ? 's' : ''}`
+  const total = etiquetasSel.reduce((s,e)=>s+e.quantidade,0)
+  infoEl.textContent = `${total} etiqueta${total!==1?'s':''}`
 
   let html = ''
-  etiquetasSel.forEach(({ produto, quantidade }) => {
-    for (let i = 0; i < quantidade; i++) {
-      html += `
-        <div class="etiqueta">
-          <div class="etiqueta-nome">${escHtml(produto.nome)}</div>
-          <svg class="etiqueta-barcode" data-codigo="${produto.codigo_barras}"></svg>
-          <div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>
-        </div>`
+  etiquetasSel.forEach(({produto,quantidade})=>{
+    for(let i=0;i<quantidade;i++){
+      html += `<div class="etiqueta">
+        <div class="etiqueta-nome">${escHtml(produto.nome)}</div>
+        <svg class="etiqueta-barcode" data-codigo="${produto.codigo_barras}"></svg>
+        <div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>
+      </div>`
     }
   })
 
   preview.innerHTML = html
   printArea.innerHTML = html
-
-  // Renderiza código de barras em TODOS os elementos (preview + print area)
-  document.querySelectorAll('.etiqueta-barcode').forEach(svg => {
-    renderBarcode(svg, svg.dataset.codigo, {
-      width: 1.4, height: 36, fontSize: 9, margin: 4
-    })
-  })
+  document.querySelectorAll('.etiqueta-barcode').forEach(svg =>
+    renderBarcode(svg, svg.dataset.codigo, {width:1.4,height:36,fontSize:9,margin:4})
+  )
 }
 
-document.getElementById('btn-imprimir-etiquetas').addEventListener('click', () => {
-  if (etiquetasSel.length === 0) {
-    toast('Selecione pelo menos um produto para imprimir etiquetas.', 'warn')
-    return
-  }
+document.getElementById('btn-imprimir-etiquetas').addEventListener('click', ()=>{
+  if (!etiquetasSel.length) { toast('Selecione ao menos um produto.','warn'); return }
   window.print()
 })
 
 /* ============================================================
-   ==================  SEÇÃO: CAIXA  ==================
+   CAIXA
    ============================================================ */
-let numVendaAtual = 1
-
 function focusCaixa() {
   document.getElementById('data-hoje').textContent =
-    new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-  setTimeout(() => document.getElementById('input-barcode').focus(), 80)
+    new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})
+  setTimeout(()=>document.getElementById('input-barcode').focus(), 80)
 }
 
-/* Scanner / input */
-document.getElementById('input-barcode').addEventListener('keydown', async e => {
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    await adicionarItem()
-  }
+document.getElementById('input-barcode').addEventListener('keydown', async e=>{
+  if(e.key==='Enter'){ e.preventDefault(); await adicionarItem() }
 })
-
 document.getElementById('btn-add-item').addEventListener('click', adicionarItem)
 
 async function adicionarItem() {
   const input  = document.getElementById('input-barcode')
   const codigo = input.value.trim()
   if (!codigo) return
-
   try {
     const prod = await api.buscarPorCodigo(codigo)
     if (!prod) {
       input.classList.add('error')
-      toast(`Produto não encontrado: ${codigo}`, 'error')
-      setTimeout(() => input.classList.remove('error'), 600)
+      toast(`Produto não encontrado: ${codigo}`,'error')
+      setTimeout(()=>input.classList.remove('error'),600)
       input.value = ''
       return
     }
     adicionarAoCarrinho(prod)
     input.value = ''
     input.focus()
-  } catch(err) {
-    toast(`Erro: ${err.message}`, 'error')
-  }
+  } catch(err) { toast(`Erro: ${err.message}`,'error') }
 }
 
-/* Busca por nome no caixa */
-document.getElementById('btn-buscar-produto-nome').addEventListener('click', () => {
+/* Busca por nome */
+document.getElementById('btn-buscar-produto-nome').addEventListener('click', ()=>{
   renderBuscaCaixa(todosProdutos)
   openModal('modal-buscar-nome')
-  setTimeout(() => document.getElementById('input-busca-caixa').focus(), 80)
+  setTimeout(()=>document.getElementById('input-busca-caixa').focus(),80)
 })
-
-document.getElementById('input-busca-caixa').addEventListener('input', e => {
+document.getElementById('input-busca-caixa').addEventListener('input', e=>{
   const q = e.target.value.toLowerCase()
-  renderBuscaCaixa(todosProdutos.filter(p => p.nome.toLowerCase().includes(q)))
+  renderBuscaCaixa(todosProdutos.filter(p=>p.nome.toLowerCase().includes(q)))
 })
 
 function renderBuscaCaixa(lista) {
   const tbody = document.getElementById('tbody-busca-caixa')
-  if (lista.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-state" style="padding:20px 0;">Nenhum produto encontrado</td></tr>`
+  if (!lista.length) {
+    tbody.innerHTML=`<tr><td colspan="5" class="empty-state" style="padding:20px 0;">Nenhum produto encontrado</td></tr>`
     return
   }
-  tbody.innerHTML = lista.map(p => `
-    <tr>
+  tbody.innerHTML = lista.map(p=>{
+    const estOk = p.estoque > 0
+    return `<tr>
       <td>${escHtml(p.nome)}</td>
       <td><code>${p.codigo_barras}</code></td>
       <td>${fmtMoeda(p.preco_venda)}</td>
-      <td>
-        <button class="btn btn-sm btn-primary" onclick="adicionarDoModal(${p.id})">+ Adicionar</button>
-      </td>
-    </tr>
-  `).join('')
+      <td>${estOk?`<span class="badge-estoque-ok">${p.estoque}</span>`:`<span class="badge-estoque-baixo">0</span>`}</td>
+      <td><button class="btn btn-sm btn-primary" onclick="adicionarDoModal(${p.id})">+ Adicionar</button></td>
+    </tr>`
+  }).join('')
 }
 
 function adicionarDoModal(id) {
-  const prod = todosProdutos.find(p => p.id === id)
-  if (!prod) return
+  const prod = todosProdutos.find(p=>p.id===id); if(!prod) return
   adicionarAoCarrinho(prod)
   closeModal('modal-buscar-nome')
   document.getElementById('input-barcode').focus()
 }
 
 function adicionarAoCarrinho(prod) {
-  const existe = carrinho.find(i => i.produto_id === prod.id)
-  if (existe) {
-    existe.quantidade++
-  } else {
-    carrinho.push({
-      produto_id:     prod.id,
-      nome:           prod.nome,
-      quantidade:     1,
-      preco_unitario: prod.preco_venda,
-      preco_custo:    prod.preco_custo
-    })
-  }
+  const existe = carrinho.find(i=>i.produto_id===prod.id)
+  existe
+    ? existe.quantidade++
+    : carrinho.push({produto_id:prod.id, nome:prod.nome, quantidade:1,
+                     preco_unitario:prod.preco_venda, preco_custo:prod.preco_custo})
   renderCarrinho()
 }
 
 function renderCarrinho() {
-  const tbody     = document.getElementById('tbody-carrinho')
-  const btnFin    = document.getElementById('btn-finalizar-venda')
-  const totalEl   = document.getElementById('total-venda')
-  const countEl   = document.getElementById('carrinho-count')
-  const subEl     = document.getElementById('resumo-subtotal')
-  const itensEl   = document.getElementById('resumo-itens')
+  const tbody   = document.getElementById('tbody-carrinho')
+  const btnFin  = document.getElementById('btn-finalizar-venda')
+  const totalEl = document.getElementById('total-venda')
+  const countEl = document.getElementById('carrinho-count')
+  const subEl   = document.getElementById('resumo-subtotal')
+  const itensEl = document.getElementById('resumo-itens')
 
-  if (carrinho.length === 0) {
-    tbody.innerHTML = `
-      <tr class="empty-row">
-        <td colspan="5" class="empty-state" style="padding: 48px 0;">
-          <div class="empty-icon">🛒</div>
-          <div>Carrinho vazio</div>
-          <div class="empty-hint">Escaneie ou busque um produto</div>
-        </td>
-      </tr>`
+  if (!carrinho.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5" class="empty-state" style="padding:48px 0;">
+      <div class="empty-icon">🛒</div><div>Carrinho vazio</div>
+      <div class="empty-hint">Escaneie ou busque um produto</div>
+    </td></tr>`
     btnFin.disabled = true
     totalEl.textContent = 'R$ 0,00'
     countEl.textContent = '0 itens'
@@ -569,555 +420,458 @@ function renderCarrinho() {
     return
   }
 
-  let total   = 0
-  let numItens = 0
-  tbody.innerHTML = carrinho.map((item, idx) => {
+  let total=0, numItens=0
+  tbody.innerHTML = carrinho.map((item,idx)=>{
     const sub = item.quantidade * item.preco_unitario
     total    += sub
     numItens += item.quantidade
-    return `
-      <tr>
-        <td><strong>${escHtml(item.nome)}</strong></td>
-        <td>
-          <div class="qty-control">
-            <button class="btn-xs" onclick="alterarQtd(${idx}, -1)">−</button>
-            <span class="qty-num">${item.quantidade}</span>
-            <button class="btn-xs" onclick="alterarQtd(${idx}, +1)">+</button>
-          </div>
-        </td>
-        <td>${fmtMoeda(item.preco_unitario)}</td>
-        <td><strong>${fmtMoeda(sub)}</strong></td>
-        <td>
-          <button class="btn-xs" title="Remover" style="color:var(--danger);" onclick="removerDoCarrinho(${idx})">✕</button>
-        </td>
-      </tr>`
+    return `<tr>
+      <td><strong>${escHtml(item.nome)}</strong></td>
+      <td>
+        <div class="qty-control">
+          <button class="btn-xs" onclick="alterarQtd(${idx},-1)">−</button>
+          <span class="qty-num">${item.quantidade}</span>
+          <button class="btn-xs" onclick="alterarQtd(${idx},+1)">+</button>
+        </div>
+      </td>
+      <td>${fmtMoeda(item.preco_unitario)}</td>
+      <td><strong>${fmtMoeda(sub)}</strong></td>
+      <td><button class="btn-xs" style="color:var(--danger);" onclick="removerDoCarrinho(${idx})">✕</button></td>
+    </tr>`
   }).join('')
 
   totalEl.textContent = fmtMoeda(total)
   subEl.textContent   = fmtMoeda(total)
-  countEl.textContent = `${numItens} ${numItens !== 1 ? 'itens' : 'item'}`
+  countEl.textContent = `${numItens} ${numItens!==1?'itens':'item'}`
   itensEl.textContent = numItens
   btnFin.disabled     = false
 }
 
 function alterarQtd(idx, delta) {
   carrinho[idx].quantidade += delta
-  if (carrinho[idx].quantidade <= 0) carrinho.splice(idx, 1)
+  if (carrinho[idx].quantidade<=0) carrinho.splice(idx,1)
   renderCarrinho()
 }
+function removerDoCarrinho(idx) { carrinho.splice(idx,1); renderCarrinho() }
 
-function removerDoCarrinho(idx) {
-  carrinho.splice(idx, 1)
-  renderCarrinho()
-}
-
-/* Finalizar venda */
-document.getElementById('btn-finalizar-venda').addEventListener('click', async () => {
-  if (carrinho.length === 0) return
-
-  const total = carrinho.reduce((s, i) => s + i.quantidade * i.preco_unitario, 0)
-
-  try {
-    await api.finalizarVenda({ itens: carrinho, total })
-    document.getElementById('venda-ok-total').textContent = fmtMoeda(total)
-    carrinho = []
-    renderCarrinho()
-    openModal('modal-venda-ok')
-    numVendaAtual++
-    document.getElementById('num-venda-atual').textContent = `#${numVendaAtual}`
-  } catch(err) {
-    toast(`Erro ao finalizar venda: ${err.message}`, 'error')
-  }
+/* Finalizar → abre modal de pagamento */
+document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
+  if (!carrinho.length) return
+  const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
+  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(total)
+  openModal('modal-pagamento')
 })
 
-document.getElementById('btn-nova-venda').addEventListener('click', () => {
+/* Botões de pagamento */
+document.querySelectorAll('.pagamento-btn').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    const pagamento = btn.dataset.pag
+    const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
+    try {
+      await api.finalizarVenda({itens:carrinho, total, pagamento})
+      document.getElementById('venda-ok-total').textContent = fmtMoeda(total)
+      document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
+      closeModal('modal-pagamento')
+      carrinho = []
+      renderCarrinho()
+      await carregarProdutos() // atualiza estoque
+      openModal('modal-venda-ok')
+    } catch(err) { toast(`Erro ao finalizar: ${err.message}`,'error') }
+  })
+})
+
+document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
   closeModal('modal-venda-ok')
   document.getElementById('input-barcode').focus()
 })
 
-/* Cancelar venda */
-document.getElementById('btn-cancelar-venda').addEventListener('click', () => {
-  if (carrinho.length === 0) { toast('Carrinho já está vazio.'); return }
-  confirmar('Deseja cancelar a venda atual? Todos os itens serão removidos.', () => {
-    carrinho = []
-    renderCarrinho()
-    toast('Venda cancelada.')
+document.getElementById('btn-cancelar-venda').addEventListener('click', ()=>{
+  if (!carrinho.length) { toast('Carrinho já está vazio.'); return }
+  confirmar('Deseja cancelar a venda? Todos os itens serão removidos.', ()=>{
+    carrinho = []; renderCarrinho(); toast('Venda cancelada.')
     document.getElementById('input-barcode').focus()
   })
 })
 
 /* ============================================================
-   ==================  SEÇÃO: RELATÓRIOS  ==================
+   RELATÓRIOS (operador — sem lucro)
    ============================================================ */
-
-/* Tabs */
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
-    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'))
+document.querySelectorAll('.tab-btn[data-tab]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.classList.remove('active'))
+    document.querySelectorAll('.tab-pane[id^="tab-"]').forEach(p=>p.classList.remove('active'))
     btn.classList.add('active')
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active')
-
-    if (btn.dataset.tab === 'hoje')   carregarHoje()
-    if (btn.dataset.tab === 'mensal') carregarMensal()
-    if (btn.dataset.tab === 'lucro')  carregarLucro()
+    if(btn.dataset.tab==='hoje')   carregarHoje()
+    if(btn.dataset.tab==='mensal') carregarMensal()
   })
 })
 
-/* Inicializar seletores de data */
 function initDateSelectors() {
-  const MESES = [
-    'Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'
-  ]
-  const now  = new Date()
-  const mesA  = now.getMonth() + 1
-  const anoA  = now.getFullYear()
-  const anos  = Array.from({ length: 5 }, (_, i) => anoA - i)
+  const now = new Date()
+  const mesA = now.getMonth()+1, anoA = now.getFullYear()
+  const anos = Array.from({length:5},(_,i)=>anoA-i)
+  const mesOpts = MESES_PT.slice(1).map((m,i)=>`<option value="${i+1}"${i+1===mesA?' selected':''}>${m}</option>`).join('')
+  const anoOpts = anos.map(a=>`<option value="${a}"${a===anoA?' selected':''}>${a}</option>`).join('')
 
-  ;['sel-mes-mensal','sel-mes-lucro'].forEach(id => {
-    document.getElementById(id).innerHTML = MESES.map((m, i) =>
-      `<option value="${i+1}" ${i+1===mesA?'selected':''}>${m}</option>`
-    ).join('')
-  })
+  ;['sel-mes-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=mesOpts })
+  ;['sel-ano-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=anoOpts })
 
-  ;['sel-ano-mensal','sel-ano-lucro'].forEach(id => {
-    document.getElementById(id).innerHTML = anos.map(a =>
-      `<option value="${a}" ${a===anoA?'selected':''}>${a}</option>`
-    ).join('')
-  })
+  // Admin selectors
+  ;['admin-sel-mes-lucro'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=mesOpts })
+  ;['admin-sel-ano-lucro'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=anoOpts })
 }
 
-/* ------- HOJE ------- */
 async function carregarHoje() {
-  try {
-    const dados = await api.vendasHoje()
-    relMesHoje  = dados
-    renderStatsHoje(dados)
-    renderTabelaHoje(dados.vendas)
-  } catch(err) {
-    toast(`Erro ao carregar relatório: ${err.message}`, 'error')
-  }
+  const dados = await api.vendasHoje()
+  const d = new Date()
+  document.getElementById('titulo-hoje').textContent =
+    `Vendas — ${d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}`
+  document.getElementById('stats-hoje').innerHTML = `
+    <div class="stat-card"><span class="stat-label">Vendas realizadas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
+    <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
+    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
+
+  const tbody = document.getElementById('tbody-hoje')
+  tbody.innerHTML = !dados.vendas.length
+    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda hoje</td></tr>`
+    : dados.vendas.map(v=>`<tr>
+        <td><code>#${v.id}</code></td>
+        <td>${fmtHora(v.criado_em)}</td>
+        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
+        <td><strong>${fmtMoeda(v.total)}</strong></td>
+        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+      </tr>`).join('')
 }
 
 document.getElementById('btn-refresh-hoje').addEventListener('click', carregarHoje)
 
-function renderStatsHoje({ totais }) {
-  const d = new Date()
-  const dStr = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
-  document.getElementById('titulo-hoje').textContent = `Vendas — ${dStr}`
-
-  document.getElementById('stats-hoje').innerHTML = `
-    <div class="stat-card">
-      <span class="stat-label">Vendas realizadas</span>
-      <span class="stat-value">${totais.num_vendas}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Total arrecadado</span>
-      <span class="stat-value green">${fmtMoeda(totais.total_vendas)}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Ticket médio</span>
-      <span class="stat-value purple">${totais.num_vendas > 0 ? fmtMoeda(totais.total_vendas / totais.num_vendas) : 'R$ 0,00'}</span>
-    </div>`
-}
-
-function renderTabelaHoje(vendas) {
-  const tbody = document.getElementById('tbody-hoje')
-  if (!vendas || vendas.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="padding:32px 0;">Nenhuma venda registrada hoje</td></tr>`
-    return
-  }
-  tbody.innerHTML = vendas.map(v => `
-    <tr>
-      <td><code>#${v.id}</code></td>
-      <td>${fmtHora(v.criado_em)}</td>
-      <td>${v.num_itens} ${v.num_itens === 1 ? 'item' : 'itens'}</td>
-      <td><strong>${fmtMoeda(v.total)}</strong></td>
-      <td>
-        <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
-      </td>
-    </tr>`
-  ).join('')
-}
-
-/* ------- MENSAL ------- */
 async function carregarMensal() {
   const mes = parseInt(document.getElementById('sel-mes-mensal').value)
   const ano = parseInt(document.getElementById('sel-ano-mensal').value)
-  try {
-    const dados = await api.vendasMensais(mes, ano)
-    renderStatsMensal(dados, mes, ano)
-    renderTabelaMensal(dados.vendas)
-  } catch(err) {
-    toast(`Erro ao carregar relatório: ${err.message}`, 'error')
-  }
+  const dados = await api.vendasMensais(mes, ano)
+  document.getElementById('stats-mensal').innerHTML = `
+    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
+    <div class="stat-card"><span class="stat-label">Vendas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
+    <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
+    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
+
+  const tbody = document.getElementById('tbody-mensal')
+  tbody.innerHTML = !dados.vendas.length
+    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
+    : dados.vendas.map(v=>`<tr>
+        <td><code>#${v.id}</code></td>
+        <td>${fmtDH(v.criado_em)}</td>
+        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
+        <td><strong>${fmtMoeda(v.total)}</strong></td>
+        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+      </tr>`).join('')
 }
 
 document.getElementById('btn-buscar-mensal').addEventListener('click', carregarMensal)
 
-const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
-
-function renderStatsMensal({ totais }, mes, ano) {
-  document.getElementById('stats-mensal').innerHTML = `
-    <div class="stat-card">
-      <span class="stat-label">Mês</span>
-      <span class="stat-value" style="font-size:20px;">${MESES_PT[mes]} ${ano}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Vendas realizadas</span>
-      <span class="stat-value">${totais.num_vendas}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Total arrecadado</span>
-      <span class="stat-value green">${fmtMoeda(totais.total_vendas)}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Ticket médio</span>
-      <span class="stat-value purple">${totais.num_vendas > 0 ? fmtMoeda(totais.total_vendas / totais.num_vendas) : 'R$ 0,00'}</span>
-    </div>`
-}
-
-function renderTabelaMensal(vendas) {
-  const tbody = document.getElementById('tbody-mensal')
-  if (!vendas || vendas.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
-    return
-  }
-  tbody.innerHTML = vendas.map(v => `
-    <tr>
-      <td><code>#${v.id}</code></td>
-      <td>${fmtDataHora(v.criado_em)}</td>
-      <td>${v.num_itens} ${v.num_itens === 1 ? 'item' : 'itens'}</td>
-      <td><strong>${fmtMoeda(v.total)}</strong></td>
-      <td>
-        <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
-      </td>
-    </tr>`
-  ).join('')
-}
-
-/* ------- LUCRO ------- */
-async function carregarLucro() {
-  const mes = parseInt(document.getElementById('sel-mes-lucro').value)
-  const ano = parseInt(document.getElementById('sel-ano-lucro').value)
-  try {
-    const dados = await api.lucroMensal(mes, ano)
-    renderStatsLucro(dados, mes, ano)
-  } catch(err) {
-    toast(`Erro ao carregar lucro: ${err.message}`, 'error')
-  }
-}
-
-document.getElementById('btn-buscar-lucro').addEventListener('click', carregarLucro)
-
-function renderStatsLucro(dados, mes, ano) {
-  const { receita, custo, lucro } = dados
-  const lucroPct = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
-
-  document.getElementById('stats-lucro').innerHTML = `
-    <div class="stat-card">
-      <span class="stat-label">Mês</span>
-      <span class="stat-value" style="font-size:20px;">${MESES_PT[mes]} ${ano}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Receita total</span>
-      <span class="stat-value green">${fmtMoeda(receita)}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Custo total</span>
-      <span class="stat-value red">${fmtMoeda(custo)}</span>
-    </div>
-    <div class="stat-card highlight">
-      <span class="stat-label">Lucro líquido</span>
-      <span class="stat-value ${lucro >= 0 ? 'green' : 'red'}">${fmtMoeda(lucro)}</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Margem de lucro</span>
-      <span class="stat-value ${parseFloat(lucroPct) >= 0 ? 'purple' : 'red'}">${lucroPct}%</span>
-    </div>`
-
-  // Barra visual de composição
-  const chartArea = document.getElementById('lucro-chart-area')
-  if (receita > 0) {
-    chartArea.style.display = 'block'
-    const custoW  = ((custo / receita) * 100).toFixed(1)
-    const lucroW  = ((Math.max(lucro, 0) / receita) * 100).toFixed(1)
-    document.getElementById('lucro-bar-visual').innerHTML = `
-      <div class="lucro-bar-wrap">
-        <div class="lucro-bar-custo"  style="width:${custoW}%"></div>
-        <div class="lucro-bar-lucro"  style="width:${lucroW}%"></div>
-      </div>
-      <div class="lucro-legend">
-        <div class="legend-item">
-          <div class="legend-dot" style="background:#ef4444;"></div>
-          <span>Custo: ${fmtMoeda(custo)} (${custoW}%)</span>
-        </div>
-        <div class="legend-item">
-          <div class="legend-dot" style="background:#10b981;"></div>
-          <span>Lucro: ${fmtMoeda(lucro)} (${lucroW}%)</span>
-        </div>
-      </div>`
-  } else {
-    chartArea.style.display = 'none'
-  }
-}
-
-/* ------- DETALHES DE VENDA ------- */
+/* Detalhes venda */
 async function verDetalhesVenda(id) {
-  try {
-    const { venda, itens } = await api.detalhesVenda(id)
-    document.getElementById('detalhes-venda-titulo').textContent = `Venda #${id} — ${fmtDataHora(venda.criado_em)}`
-
-    const tbody = document.getElementById('tbody-detalhes-venda')
-    tbody.innerHTML = itens.map(i => `
-      <tr>
-        <td>${escHtml(i.nome_produto)}</td>
-        <td style="text-align:center;">${i.quantidade}</td>
-        <td>${fmtMoeda(i.preco_unitario)}</td>
-        <td><strong>${fmtMoeda(i.preco_unitario * i.quantidade)}</strong></td>
-      </tr>`
-    ).join('')
-
-    document.getElementById('detalhes-total-row').innerHTML =
-      `Total: ${fmtMoeda(venda.total)}`
-
-    openModal('modal-detalhes-venda')
-  } catch(err) {
-    toast(`Erro ao carregar detalhes: ${err.message}`, 'error')
-  }
+  const {venda, itens} = await api.detalhesVenda(id)
+  document.getElementById('detalhes-venda-titulo').textContent =
+    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}`
+  document.getElementById('tbody-detalhes-venda').innerHTML = itens.map(i=>`
+    <tr>
+      <td>${escHtml(i.nome_produto)}</td>
+      <td style="text-align:center;">${i.quantidade}</td>
+      <td>${fmtMoeda(i.preco_unitario)}</td>
+      <td><strong>${fmtMoeda(i.preco_unitario*i.quantidade)}</strong></td>
+    </tr>`).join('')
+  document.getElementById('detalhes-total-row').innerHTML = `Total: ${fmtMoeda(venda.total)}`
+  openModal('modal-detalhes-venda')
 }
 
 /* ============================================================
-   EXPORTAR PDF
+   EXPORTAR PDF (relatórios operador)
    ============================================================ */
-function criarDocPDF(titulo, subtitulo) {
-  const { jsPDF } = window.jspdf
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-
-  // Cabeçalho
-  doc.setFillColor(124, 58, 237)
-  doc.rect(0, 0, 210, 22, 'F')
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text('Baby Store — Sistema PDV', 14, 10)
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.text(titulo, 14, 17)
-
-  doc.setTextColor(100, 116, 139)
-  doc.setFontSize(9)
-  doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 210 - 14, 17, { align: 'right' })
-
-  if (subtitulo) {
-    doc.setTextColor(30, 41, 59)
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text(subtitulo, 14, 32)
+function criarDocBase(titulo, subtitulo) {
+  const {jsPDF} = window.jspdf
+  const doc = new jsPDF({unit:'mm',format:'a4'})
+  doc.setFillColor(124,58,237); doc.rect(0,0,210,22,'F')
+  doc.setTextColor(255,255,255); doc.setFontSize(14); doc.setFont('helvetica','bold')
+  doc.text('Baby Store — Sistema PDV',14,10)
+  doc.setFontSize(10); doc.setFont('helvetica','normal')
+  doc.text(titulo,14,17)
+  doc.setTextColor(100,116,139); doc.setFontSize(9)
+  doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`,196,17,{align:'right'})
+  if(subtitulo){
+    doc.setTextColor(30,41,59); doc.setFontSize(12); doc.setFont('helvetica','bold')
+    doc.text(subtitulo,14,32)
   }
-
-  return { doc, y: subtitulo ? 40 : 32 }
+  return {doc, y: subtitulo?40:32}
 }
 
-function addTabelaPDF(doc, y, headers, rows) {
-  const margin  = 14
-  const pageW   = 210
-  const colW    = (pageW - margin * 2) / headers.length
-
-  // Cabeçalho da tabela
-  doc.setFillColor(241, 245, 249)
-  doc.rect(margin, y, pageW - margin * 2, 8, 'F')
-  doc.setTextColor(100, 116, 139)
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'bold')
-  headers.forEach((h, i) => doc.text(h, margin + colW * i + 2, y + 5.5))
-  y += 9
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
-
-  rows.forEach((row, ri) => {
-    if (y > 270) { doc.addPage(); y = 20 }
-    if (ri % 2 === 0) {
-      doc.setFillColor(248, 250, 252)
-      doc.rect(margin, y, pageW - margin * 2, 7, 'F')
-    }
-    doc.setTextColor(30, 41, 59)
-    row.forEach((cell, i) => doc.text(String(cell), margin + colW * i + 2, y + 5))
-    y += 7
+function addTabela(doc, y, headers, rows) {
+  const m=14, W=210, cW=(W-m*2)/headers.length
+  doc.setFillColor(241,245,249); doc.rect(m,y,W-m*2,8,'F')
+  doc.setTextColor(100,116,139); doc.setFontSize(8); doc.setFont('helvetica','bold')
+  headers.forEach((h,i)=>doc.text(h,m+cW*i+2,y+5.5))
+  y+=9; doc.setFont('helvetica','normal'); doc.setFontSize(9)
+  rows.forEach((row,ri)=>{
+    if(y>270){doc.addPage();y=20}
+    if(ri%2===0){doc.setFillColor(248,250,252);doc.rect(m,y,W-m*2,7,'F')}
+    doc.setTextColor(30,41,59)
+    row.forEach((cell,i)=>doc.text(String(cell),m+cW*i+2,y+5))
+    y+=7
   })
-
   return y
 }
 
-/* Exportar: Hoje */
-document.getElementById('btn-export-hoje').addEventListener('click', async () => {
+document.getElementById('btn-export-hoje').addEventListener('click', async ()=>{
   const dados = await api.vendasHoje()
-  const { doc, y: y0 } = criarDocPDF(
-    'Relatório de Vendas do Dia',
-    `Data: ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`
-  )
-
-  let y = y0 + 4
-
-  // Cards de resumo
-  doc.setFillColor(237, 233, 254)
-  doc.roundedRect(14, y, 55, 18, 3, 3, 'F')
-  doc.setTextColor(91, 33, 182)
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
-  doc.text('Vendas', 16, y + 6)
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text(String(dados.totais.num_vendas), 16, y + 14)
-
-  doc.setFillColor(209, 250, 229)
-  doc.roundedRect(74, y, 65, 18, 3, 3, 'F')
-  doc.setTextColor(5, 150, 105)
-  doc.setFontSize(8)
-  doc.setFont('helvetica', 'normal')
-  doc.text('Total Arrecadado', 76, y + 6)
-  doc.setFontSize(13)
-  doc.setFont('helvetica', 'bold')
-  doc.text(fmtMoeda(dados.totais.total_vendas), 76, y + 14)
-
-  y += 26
-
-  const rows = (dados.vendas || []).map(v => [
-    `#${v.id}`,
-    fmtHora(v.criado_em),
-    `${v.num_itens} ${v.num_itens===1?'item':'itens'}`,
-    fmtMoeda(v.total)
-  ])
-  y = addTabelaPDF(doc, y, ['Nº', 'Hora', 'Itens', 'Total'], rows)
-
-  // Rodapé
-  doc.setTextColor(148, 163, 184)
-  doc.setFontSize(8)
-  doc.text('Baby Store PDV', 14, 290)
-  doc.text('Documento gerado automaticamente', 196, 290, { align: 'right' })
-
+  const {doc,y:y0} = criarDocBase('Relatório de Vendas do Dia',
+    `Data: ${new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`)
+  let y=y0+6
+  doc.setFillColor(237,233,254); doc.roundedRect(14,y,55,18,3,3,'F')
+  doc.setTextColor(91,33,182); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Vendas',16,y+6)
+  doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(String(dados.totais.num_vendas),16,y+14)
+  doc.setFillColor(209,250,229); doc.roundedRect(74,y,65,18,3,3,'F')
+  doc.setTextColor(5,150,105); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Total Arrecadado',76,y+6)
+  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.text(fmtMoeda(dados.totais.total_vendas),76,y+14)
+  y+=26
+  const rows=(dados.vendas||[]).map(v=>[`#${v.id}`,fmtHora(v.criado_em),PAGAMENTO_LABEL[v.pagamento]||v.pagamento,`${v.num_itens}`,fmtMoeda(v.total)])
+  addTabela(doc,y,['Nº','Hora','Pagamento','Itens','Total'],rows)
+  doc.setTextColor(148,163,184); doc.setFontSize(8)
+  doc.text('Baby Store PDV',14,290); doc.text('Gerado automaticamente',196,290,{align:'right'})
   doc.save(`vendas-hoje-${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.pdf`)
-  toast('PDF exportado com sucesso!', 'success')
+  toast('PDF exportado!','success')
 })
 
-/* Exportar: Mensal */
-document.getElementById('btn-export-mensal').addEventListener('click', async () => {
-  const mes  = parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano  = parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados = await api.vendasMensais(mes, ano)
-
-  const { doc, y: y0 } = criarDocPDF(
-    'Histórico Mensal de Vendas',
-    `Período: ${MESES_PT[mes]} de ${ano}`
-  )
-
-  let y = y0 + 4
-
-  doc.setFillColor(237, 233, 254)
-  doc.roundedRect(14, y, 55, 18, 3, 3, 'F')
-  doc.setTextColor(91, 33, 182)
-  doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-  doc.text('Vendas', 16, y + 6)
-  doc.setFontSize(14); doc.setFont('helvetica', 'bold')
-  doc.text(String(dados.totais.num_vendas), 16, y + 14)
-
-  doc.setFillColor(209, 250, 229)
-  doc.roundedRect(74, y, 65, 18, 3, 3, 'F')
-  doc.setTextColor(5, 150, 105)
-  doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-  doc.text('Total Arrecadado', 76, y + 6)
-  doc.setFontSize(13); doc.setFont('helvetica', 'bold')
-  doc.text(fmtMoeda(dados.totais.total_vendas), 76, y + 14)
-
-  const ticketMedio = dados.totais.num_vendas > 0
-    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
-  doc.setFillColor(254, 243, 199)
-  doc.roundedRect(144, y, 52, 18, 3, 3, 'F')
-  doc.setTextColor(180, 83, 9)
-  doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-  doc.text('Ticket Médio', 146, y + 6)
-  doc.setFontSize(12); doc.setFont('helvetica', 'bold')
-  doc.text(fmtMoeda(ticketMedio), 146, y + 14)
-
-  y += 26
-
-  const rows = (dados.vendas || []).map(v => [
-    `#${v.id}`,
-    fmtDataHora(v.criado_em),
-    `${v.num_itens}`,
-    fmtMoeda(v.total)
-  ])
-  y = addTabelaPDF(doc, y, ['Nº', 'Data/Hora', 'Itens', 'Total'], rows)
-
-  doc.setTextColor(148, 163, 184)
-  doc.setFontSize(8)
-  doc.text('Baby Store PDV', 14, 290)
-  doc.text('Documento gerado automaticamente', 196, 290, { align: 'right' })
-
+document.getElementById('btn-export-mensal').addEventListener('click', async ()=>{
+  const mes=parseInt(document.getElementById('sel-mes-mensal').value)
+  const ano=parseInt(document.getElementById('sel-ano-mensal').value)
+  const dados=await api.vendasMensais(mes,ano)
+  const {doc,y:y0}=criarDocBase('Histórico Mensal de Vendas',`Período: ${MESES_PT[mes]} de ${ano}`)
+  let y=y0+6
+  doc.setFillColor(237,233,254); doc.roundedRect(14,y,55,18,3,3,'F')
+  doc.setTextColor(91,33,182); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Vendas',16,y+6)
+  doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(String(dados.totais.num_vendas),16,y+14)
+  doc.setFillColor(209,250,229); doc.roundedRect(74,y,65,18,3,3,'F')
+  doc.setTextColor(5,150,105); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Total',76,y+6)
+  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.text(fmtMoeda(dados.totais.total_vendas),76,y+14)
+  y+=26
+  const rows=(dados.vendas||[]).map(v=>[`#${v.id}`,fmtDH(v.criado_em),PAGAMENTO_LABEL[v.pagamento]||v.pagamento,`${v.num_itens}`,fmtMoeda(v.total)])
+  addTabela(doc,y,['Nº','Data/Hora','Pagamento','Itens','Total'],rows)
+  doc.setTextColor(148,163,184); doc.setFontSize(8)
+  doc.text('Baby Store PDV',14,290); doc.text('Gerado automaticamente',196,290,{align:'right'})
   doc.save(`vendas-${MESES_PT[mes].toLowerCase()}-${ano}.pdf`)
-  toast('PDF exportado com sucesso!', 'success')
+  toast('PDF exportado!','success')
 })
 
-/* Exportar: Lucro */
-document.getElementById('btn-export-lucro').addEventListener('click', async () => {
-  const mes  = parseInt(document.getElementById('sel-mes-lucro').value)
-  const ano  = parseInt(document.getElementById('sel-ano-lucro').value)
-  const dados = await api.lucroMensal(mes, ano)
-  const { receita, custo, lucro } = dados
+/* ============================================================
+   ADMINISTRADOR
+   ============================================================ */
+function renderAdminState() {
+  document.getElementById('admin-login-wall').style.display = isAdmin ? 'none' : 'flex'
+  document.getElementById('admin-painel').style.display     = isAdmin ? 'block' : 'none'
+  if (isAdmin) carregarAdminCustos()
+}
 
-  const { doc, y: y0 } = criarDocPDF(
-    'Relatório de Lucratividade',
-    `Período: ${MESES_PT[mes]} de ${ano}`
-  )
+/* Login */
+document.getElementById('btn-admin-login').addEventListener('click', async ()=>{
+  const email = document.getElementById('admin-email').value.trim()
+  const senha = document.getElementById('admin-senha').value
+  const errEl = document.getElementById('admin-error')
+  errEl.style.display = 'none'
+  if (!email||!senha) { errEl.style.display='block'; errEl.textContent='Preencha todos os campos.'; return }
+  try {
+    const eH = await hashStr(email)
+    const sH = await hashStr(senha)
+    const ok = await api.verificarAdmin(eH, sH)
+    if (ok) {
+      isAdmin = true
+      document.getElementById('admin-email').value = ''
+      document.getElementById('admin-senha').value = ''
+      renderAdminState()
+    } else {
+      errEl.style.display = 'block'
+      errEl.textContent   = 'E-mail ou senha incorretos.'
+    }
+  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+})
 
-  let y = y0 + 6
+document.getElementById('admin-senha').addEventListener('keydown', e=>{
+  if(e.key==='Enter') document.getElementById('btn-admin-login').click()
+})
 
-  const cards = [
-    { label: 'Receita Total',  val: fmtMoeda(receita), fill: [209,250,229], text: [5,150,105] },
-    { label: 'Custo Total',    val: fmtMoeda(custo),   fill: [254,226,226], text: [185,28,28] },
-    { label: 'Lucro Líquido',  val: fmtMoeda(lucro),   fill: [237,233,254], text: [91,33,182] }
-  ]
-
-  cards.forEach((c, i) => {
-    const x = 14 + i * 66
-    doc.setFillColor(...c.fill)
-    doc.roundedRect(x, y, 62, 22, 3, 3, 'F')
-    doc.setTextColor(...c.text)
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-    doc.text(c.label, x + 3, y + 8)
-    doc.setFontSize(14); doc.setFont('helvetica', 'bold')
-    doc.text(c.val, x + 3, y + 18)
+/* Logout */
+document.getElementById('btn-admin-logout').addEventListener('click', ()=>{
+  confirmar('Deseja sair do painel de administrador?', ()=>{
+    isAdmin = false
+    renderAdminState()
+    navigateTo('produtos')
+    toast('Sessão de administrador encerrada.')
   })
+})
 
-  y += 32
+/* Tabs admin */
+document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('[data-admin-tab]').forEach(b=>b.classList.remove('active'))
+    document.querySelectorAll('#admin-painel .tab-pane').forEach(p=>p.classList.remove('active'))
+    btn.classList.add('active')
+    document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
+    if(btn.dataset.adminTab==='custos')  carregarAdminCustos()
+    if(btn.dataset.adminTab==='estoque') carregarAdminEstoque()
+  })
+})
 
-  const lucroPct = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
-  doc.setTextColor(30, 41, 59)
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold')
-  doc.text(`Margem de lucro: ${lucroPct}%`, 14, y)
+/* --- Aba: Preços de Custo --- */
+async function carregarAdminCustos() {
+  const prods = await api.listarProdutos()
+  const tbody = document.getElementById('tbody-admin-custos')
+  if (!prods.length) {
+    tbody.innerHTML=`<tr><td colspan="5" class="empty-state" style="padding:32px 0;">Nenhum produto cadastrado</td></tr>`
+    return
+  }
+  tbody.innerHTML = prods.map(p=>{
+    const semCusto = p.preco_custo===0||p.preco_custo===null
+    const m = semCusto ? '—' : margem(p.preco_custo, p.preco_venda)
+    return `<tr class="${semCusto?'linha-sem-custo':''}">
+      <td><strong>${escHtml(p.nome)}</strong> ${semCusto?'<span class="badge-sem-custo">sem custo</span>':''}</td>
+      <td>${fmtMoeda(p.preco_venda)}</td>
+      <td>${semCusto?'<span class="text-muted">—</span>':fmtMoeda(p.preco_custo)}</td>
+      <td>${typeof m==='string'&&m!=='—'?`<span class="${parseFloat(m)>=0?'positive':'negative'}">${m}</span>`:m}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="abrirEditarCusto(${p.id},'${escHtml(p.nome).replace(/'/g,"\\'")}',${p.preco_custo})">
+          ${semCusto?'✚ Definir':'✏️ Editar'}
+        </button>
+      </td>
+    </tr>`
+  }).join('')
+}
 
-  y += 14
+function abrirEditarCusto(id, nome, custoAtual) {
+  adminEditCustoId = id
+  document.getElementById('editar-custo-nome').textContent = nome
+  document.getElementById('editar-custo-valor').value = custoAtual||''
+  openModal('modal-editar-custo')
+  setTimeout(()=>document.getElementById('editar-custo-valor').focus(), 80)
+}
 
-  // Linha divisória
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.5)
-  doc.line(14, y, 196, y)
-  y += 10
+document.getElementById('btn-salvar-custo').addEventListener('click', async ()=>{
+  const v = parseFloat(document.getElementById('editar-custo-valor').value)
+  if (isNaN(v)||v<0) { toast('Valor inválido.','error'); return }
+  try {
+    await api.adminAtualizarCusto(adminEditCustoId, v)
+    closeModal('modal-editar-custo')
+    toast('Preço de custo salvo!','success')
+    await carregarAdminCustos()
+    await carregarProdutos()
+  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+})
 
-  doc.setTextColor(100, 116, 139)
-  doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-  doc.text('O lucro líquido é calculado pela diferença entre o preço de venda e o preço de custo', 14, y)
-  doc.text('de cada produto vendido no período selecionado.', 14, y + 6)
+document.getElementById('editar-custo-valor').addEventListener('keydown', e=>{
+  if(e.key==='Enter') document.getElementById('btn-salvar-custo').click()
+})
 
-  doc.setTextColor(148, 163, 184)
-  doc.setFontSize(8)
-  doc.text('Baby Store PDV', 14, 290)
-  doc.text('Documento gerado automaticamente', 196, 290, { align: 'right' })
+/* --- Aba: Estoque --- */
+async function carregarAdminEstoque() {
+  const prods = await api.listarProdutos()
+  const tbody = document.getElementById('tbody-admin-estoque')
+  if (!prods.length) {
+    tbody.innerHTML=`<tr><td colspan="4" class="empty-state" style="padding:32px 0;">Nenhum produto cadastrado</td></tr>`
+    return
+  }
+  tbody.innerHTML = prods.map(p=>{
+    const badge = p.estoque<=0
+      ? `<span class="badge-estoque-baixo">${p.estoque}</span>`
+      : p.estoque<=3
+        ? `<span class="badge-estoque-aviso">${p.estoque}</span>`
+        : `<span class="badge-estoque-ok">${p.estoque}</span>`
+    return `<tr>
+      <td><strong>${escHtml(p.nome)}</strong></td>
+      <td><code>${p.codigo_barras}</code></td>
+      <td>${badge}</td>
+      <td>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" id="est-input-${p.id}" value="${p.estoque}" min="0"
+            style="width:80px;padding:6px 10px;border:1px solid var(--border);border-radius:7px;font-size:14px;">
+          <button class="btn btn-sm btn-primary" onclick="salvarEstoque(${p.id})">Salvar</button>
+        </div>
+      </td>
+    </tr>`
+  }).join('')
+}
 
-  doc.save(`lucro-${MESES_PT[mes].toLowerCase()}-${ano}.pdf`)
-  toast('PDF exportado com sucesso!', 'success')
+async function salvarEstoque(id) {
+  const input = document.getElementById(`est-input-${id}`)
+  const v = parseInt(input.value)
+  if (isNaN(v)||v<0) { toast('Quantidade inválida.','error'); return }
+  try {
+    await api.adminAtualizarEstoque(id, v)
+    toast('Estoque atualizado!','success')
+    await carregarProdutos()
+    await carregarAdminEstoque()
+  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+}
+
+/* --- Aba: Lucro (admin) --- */
+async function carregarAdminLucro() {
+  const mes = parseInt(document.getElementById('admin-sel-mes-lucro').value)
+  const ano = parseInt(document.getElementById('admin-sel-ano-lucro').value)
+  const d = await api.lucroMensal(mes, ano)
+  const {receita,custo,lucro} = d
+  const pct = receita>0 ? ((lucro/receita)*100).toFixed(1) : '0'
+
+  document.getElementById('admin-stats-lucro').innerHTML = `
+    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
+    <div class="stat-card"><span class="stat-label">Receita total</span><span class="stat-value green">${fmtMoeda(receita)}</span></div>
+    <div class="stat-card"><span class="stat-label">Custo total</span><span class="stat-value red">${fmtMoeda(custo)}</span></div>
+    <div class="stat-card highlight"><span class="stat-label">Lucro líquido</span><span class="stat-value ${lucro>=0?'green':'red'}">${fmtMoeda(lucro)}</span></div>
+    <div class="stat-card"><span class="stat-label">Margem</span><span class="stat-value ${parseFloat(pct)>=0?'purple':'red'}">${pct}%</span></div>`
+
+  const chart = document.getElementById('admin-lucro-chart')
+  if (receita>0) {
+    chart.style.display='block'
+    const cW=((custo/receita)*100).toFixed(1)
+    const lW=((Math.max(lucro,0)/receita)*100).toFixed(1)
+    document.getElementById('admin-lucro-bar').innerHTML=`
+      <div class="lucro-bar-wrap">
+        <div class="lucro-bar-custo" style="width:${cW}%"></div>
+        <div class="lucro-bar-lucro" style="width:${lW}%"></div>
+      </div>
+      <div class="lucro-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#ef4444;"></div><span>Custo: ${fmtMoeda(custo)} (${cW}%)</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#10b981;"></div><span>Lucro: ${fmtMoeda(lucro)} (${lW}%)</span></div>
+      </div>`
+  } else { chart.style.display='none' }
+}
+
+document.getElementById('admin-btn-buscar-lucro').addEventListener('click', carregarAdminLucro)
+
+document.getElementById('admin-btn-export-lucro').addEventListener('click', async ()=>{
+  const mes=parseInt(document.getElementById('admin-sel-mes-lucro').value)
+  const ano=parseInt(document.getElementById('admin-sel-ano-lucro').value)
+  const {receita,custo,lucro}=await api.lucroMensal(mes,ano)
+  const pct=receita>0?((lucro/receita)*100).toFixed(1):'0'
+  const {doc,y:y0}=criarDocBase('Relatório de Lucratividade — CONFIDENCIAL',`Período: ${MESES_PT[mes]} de ${ano}`)
+  let y=y0+6
+  const cards=[
+    {label:'Receita Total',val:fmtMoeda(receita),fill:[209,250,229],text:[5,150,105]},
+    {label:'Custo Total',val:fmtMoeda(custo),fill:[254,226,226],text:[185,28,28]},
+    {label:'Lucro Líquido',val:fmtMoeda(lucro),fill:[237,233,254],text:[91,33,182]}
+  ]
+  cards.forEach((c,i)=>{
+    const x=14+i*66
+    doc.setFillColor(...c.fill); doc.roundedRect(x,y,62,22,3,3,'F')
+    doc.setTextColor(...c.text); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text(c.label,x+3,y+8)
+    doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(c.val,x+3,y+18)
+  })
+  y+=32
+  doc.setTextColor(30,41,59); doc.setFontSize(12); doc.setFont('helvetica','bold')
+  doc.text(`Margem de lucro: ${pct}%`,14,y)
+  doc.setTextColor(148,163,184); doc.setFontSize(8)
+  doc.text('Baby Store PDV — Documento confidencial do administrador',14,290)
+  doc.save(`lucro-${MESES_PT[mes].toLowerCase()}-${ano}-admin.pdf`)
+  toast('PDF de lucro exportado!','success')
 })
 
 /* ============================================================
@@ -1126,28 +880,10 @@ document.getElementById('btn-export-lucro').addEventListener('click', async () =
 async function init() {
   iniciarRelogio()
   initDateSelectors()
+  try { await carregarProdutos() } catch(err) { toast(`Erro ao iniciar: ${err.message}`,'error') }
 
-  try {
-    await carregarProdutos()
-  } catch(err) {
-    toast(`Erro ao iniciar: ${err.message}`, 'error')
-  }
-
-  // Número de venda (começa pelo total + 1)
-  try {
-    const hoje = await api.vendasHoje()
-    numVendaAtual = (hoje.totais.num_vendas || 0) + 1
-    document.getElementById('num-venda-atual').textContent = `#${numVendaAtual}`
-  } catch(_) {}
-
-  // Pré-carrega data de hoje na caixa
   document.getElementById('data-hoje').textContent =
-    new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
-
-  // Começa focado na caixa se não há produtos
-  if (todosProdutos.length === 0) {
-    navigateTo('produtos')
-  }
+    new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})
 }
 
 init()
