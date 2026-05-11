@@ -719,8 +719,25 @@ async function gerarComprovante(vendaId) {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100)
   doc.text('Cantinho do Bebe - Sistema PDV', W / 2, y, { align: 'center' })
 
-  doc.save(`comprovante-venda-${venda.id}.pdf`)
-  toast('Comprovante gerado!', 'success')
+  // Abre diálogo de impressão direto (sem salvar arquivo)
+  const blobUrl = doc.output('bloburl')
+  const iframe = document.createElement('iframe')
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;'
+  iframe.src = blobUrl
+  document.body.appendChild(iframe)
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow.focus()
+      iframe.contentWindow.print()
+    } catch(e) {
+      window.open(blobUrl)
+    }
+    setTimeout(() => {
+      document.body.removeChild(iframe)
+      URL.revokeObjectURL(blobUrl)
+    }, 60000)
+  }
+  toast('Abrindo impressão...', 'success')
 }
 
 /* ============================================================
