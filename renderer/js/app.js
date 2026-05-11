@@ -643,7 +643,7 @@ async function gerarComprovante(vendaId) {
   // ── CABEÇALHO ──────────────────────────────────────────
   doc.setTextColor(0)
   doc.setFontSize(13); doc.setFont('helvetica', 'bold')
-  doc.text('BABY STORE', W / 2, y, { align: 'center' })
+  doc.text('CANTINHO DO BEBE', W / 2, y, { align: 'center' })
   y += 5
 
   doc.setFontSize(7.5); doc.setFont('helvetica', 'normal')
@@ -717,7 +717,7 @@ async function gerarComprovante(vendaId) {
   doc.text('Volte sempre.', W / 2, y, { align: 'center' })
   y += 5
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100)
-  doc.text('Baby Store - Sistema PDV', W / 2, y, { align: 'center' })
+  doc.text('Cantinho do Bebe - Sistema PDV', W / 2, y, { align: 'center' })
 
   doc.save(`comprovante-venda-${venda.id}.pdf`)
   toast('Comprovante gerado!', 'success')
@@ -760,7 +760,7 @@ function _pdfHeader(doc, titulo, periodo, isConfidential = false) {
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(16)
   doc.setFont('helvetica', 'bold')
-  doc.text('Baby Store', 14, 13)
+  doc.text('Cantinho do Bebe', 14, 13)
 
   // Slogan / sistema
   doc.setTextColor(196, 181, 253)
@@ -947,7 +947,7 @@ function _pdfFooter(doc, isConfidential = false) {
     doc.setTextColor(148, 163, 184)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
-    doc.text('Baby Store — Sistema PDV', 14, 290)
+    doc.text('Cantinho do Bebe — Sistema PDV', 14, 290)
     doc.text(`Página ${p} de ${totalPages}`, W / 2, 290, { align: 'center' })
     const footerRight = isConfidential ? 'Documento confidencial' : 'Gerado automaticamente'
     doc.text(footerRight, W - 14, 290, { align: 'right' })

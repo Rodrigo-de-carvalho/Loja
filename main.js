@@ -13,7 +13,7 @@ function createWindow() {
     height:          800,
     minWidth:        1024,
     minHeight:       640,
-    title:           'Baby Store — PDV',
+    title:           'Cantinho do Bebê — PDV',
     backgroundColor: '#f1f5f9',
     webPreferences: {
       preload:          path.join(__dirname, 'preload.js'),
