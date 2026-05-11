@@ -599,80 +599,333 @@ async function verDetalhesVenda(id) {
 }
 
 /* ============================================================
-   EXPORTAR PDF (relatórios operador)
+   PDF — UTILITÁRIOS DE LAYOUT
    ============================================================ */
-function criarDocBase(titulo, subtitulo) {
-  const {jsPDF} = window.jspdf
-  const doc = new jsPDF({unit:'mm',format:'a4'})
-  doc.setFillColor(124,58,237); doc.rect(0,0,210,22,'F')
-  doc.setTextColor(255,255,255); doc.setFontSize(14); doc.setFont('helvetica','bold')
-  doc.text('Baby Store — Sistema PDV',14,10)
-  doc.setFontSize(10); doc.setFont('helvetica','normal')
-  doc.text(titulo,14,17)
-  doc.setTextColor(100,116,139); doc.setFontSize(9)
-  doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`,196,17,{align:'right'})
-  if(subtitulo){
-    doc.setTextColor(30,41,59); doc.setFontSize(12); doc.setFont('helvetica','bold')
-    doc.text(subtitulo,14,32)
+
+function _novoPDF() {
+  const { jsPDF } = window.jspdf
+  return new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+}
+
+/* Cabeçalho do relatório */
+function _pdfHeader(doc, titulo, periodo, isConfidential = false) {
+  const W = 210
+
+  // Barra roxa escura de fundo
+  doc.setFillColor(30, 27, 75)
+  doc.rect(0, 0, W, 30, 'F')
+
+  // Faixa roxa principal (2/3 esquerda)
+  doc.setFillColor(109, 40, 217)
+  doc.rect(0, 0, 130, 30, 'F')
+
+  // Triângulo decorativo (transição suave simulada)
+  doc.setFillColor(91, 33, 182)
+  doc.rect(110, 0, 30, 30, 'F')
+
+  // Ícone decorativo (círculos concêntricos)
+  doc.setFillColor(167, 139, 250)
+  doc.circle(190, 15, 12, 'F')
+  doc.setFillColor(124, 58, 237)
+  doc.circle(190, 15, 8, 'F')
+  doc.setFillColor(196, 181, 253)
+  doc.circle(190, 15, 3.5, 'F')
+
+  // Nome da loja
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(16)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Baby Store', 14, 13)
+
+  // Slogan / sistema
+  doc.setTextColor(196, 181, 253)
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Sistema de Ponto de Venda', 14, 20)
+
+  // Data de geração (canto direito)
+  doc.setTextColor(167, 139, 250)
+  doc.setFontSize(7)
+  doc.text(new Date().toLocaleString('pt-BR'), 168, 20, { align: 'right' })
+
+  // Faixa de título do relatório (cinza claro)
+  const titleBarY = 30
+  doc.setFillColor(248, 250, 252)
+  doc.rect(0, titleBarY, W, 18, 'F')
+  doc.setDrawColor(226, 232, 240)
+  doc.setLineWidth(0.4)
+  doc.line(0, titleBarY + 18, W, titleBarY + 18)
+
+  // Título
+  doc.setTextColor(30, 41, 59)
+  doc.setFontSize(13)
+  doc.setFont('helvetica', 'bold')
+  doc.text(titulo, 14, titleBarY + 8)
+
+  // Período / subtítulo
+  if (periodo) {
+    doc.setTextColor(100, 116, 139)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text(periodo, 14, titleBarY + 14)
   }
-  return {doc, y: subtitulo?40:32}
+
+  // Badge confidencial
+  if (isConfidential) {
+    doc.setFillColor(254, 226, 226)
+    doc.setDrawColor(252, 165, 165)
+    doc.roundedRect(W - 50, titleBarY + 4, 36, 9, 2, 2, 'FD')
+    doc.setTextColor(185, 28, 28)
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'bold')
+    doc.text('CONFIDENCIAL', W - 32, titleBarY + 9.5, { align: 'center' })
+  }
+
+  return titleBarY + 18 + 8 // y após o cabeçalho
 }
 
-function addTabela(doc, y, headers, rows) {
-  const m=14, W=210, cW=(W-m*2)/headers.length
-  doc.setFillColor(241,245,249); doc.rect(m,y,W-m*2,8,'F')
-  doc.setTextColor(100,116,139); doc.setFontSize(8); doc.setFont('helvetica','bold')
-  headers.forEach((h,i)=>doc.text(h,m+cW*i+2,y+5.5))
-  y+=9; doc.setFont('helvetica','normal'); doc.setFontSize(9)
-  rows.forEach((row,ri)=>{
-    if(y>270){doc.addPage();y=20}
-    if(ri%2===0){doc.setFillColor(248,250,252);doc.rect(m,y,W-m*2,7,'F')}
-    doc.setTextColor(30,41,59)
-    row.forEach((cell,i)=>doc.text(String(cell),m+cW*i+2,y+5))
-    y+=7
+/* Cards de resumo */
+function _pdfCards(doc, y, cards) {
+  const m    = 14
+  const W    = 210
+  const gap  = 5
+  const n    = cards.length
+  const cW   = (W - m * 2 - gap * (n - 1)) / n
+  const cH   = 24
+
+  const SCHEMES = {
+    purple: { accent: [109, 40, 217], bg: [237, 233, 254], label: [91, 33, 182],  value: [109, 40, 217] },
+    green:  { accent: [5, 150, 105],  bg: [209, 250, 229], label: [6, 78, 59],    value: [4, 120, 87]   },
+    red:    { accent: [185, 28, 28],  bg: [254, 226, 226], label: [127, 29, 29],  value: [185, 28, 28]  },
+    orange: { accent: [180, 83, 9],   bg: [254, 243, 199], label: [120, 53, 15],  value: [146, 64, 14]  },
+    gray:   { accent: [71, 85, 105],  bg: [241, 245, 249], label: [71, 85, 105],  value: [30, 41, 59]   },
+  }
+
+  cards.forEach((card, i) => {
+    const x = m + i * (cW + gap)
+    const s = SCHEMES[card.color] || SCHEMES.gray
+
+    // Fundo do card
+    doc.setFillColor(...s.bg)
+    doc.setDrawColor(...s.bg)
+    doc.roundedRect(x, y, cW, cH, 2, 2, 'FD')
+
+    // Barra de acento esquerda
+    doc.setFillColor(...s.accent)
+    doc.roundedRect(x, y, 3, cH, 1, 1, 'F')
+
+    // Label
+    doc.setTextColor(...s.label)
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'bold')
+    doc.text(card.label.toUpperCase(), x + 6, y + 7)
+
+    // Valor
+    doc.setTextColor(...s.value)
+    doc.setFontSize(13)
+    doc.setFont('helvetica', 'bold')
+    doc.text(String(card.value), x + 6, y + 18)
   })
-  return y
+
+  return y + cH + 7
 }
 
-document.getElementById('btn-export-hoje').addEventListener('click', async ()=>{
+/* Tabela de dados */
+function _pdfTable(doc, y, { headers, colWidths, aligns, rows }) {
+  const m      = 14
+  const W      = 210
+  const hH     = 9    // altura do cabeçalho
+  const rH     = 7.5  // altura das linhas
+  const tableW = W - m * 2
+
+  const desenharHeader = (posY) => {
+    doc.setFillColor(30, 41, 59)
+    doc.rect(m, posY, tableW, hH, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    let xc = m
+    headers.forEach((h, i) => {
+      const al = aligns?.[i] || 'left'
+      const xT = al === 'right' ? xc + colWidths[i] - 3 : (al === 'center' ? xc + colWidths[i] / 2 : xc + 3)
+      doc.text(h, xT, posY + 6, { align: al })
+      xc += colWidths[i]
+    })
+    return posY + hH
+  }
+
+  y = desenharHeader(y)
+
+  rows.forEach((row, ri) => {
+    if (y + rH > 280) {
+      doc.addPage()
+      y = 20
+      y = desenharHeader(y)
+    }
+
+    // Fundo alternado
+    doc.setFillColor(ri % 2 === 0 ? 248 : 255, ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 252 : 255)
+    doc.rect(m, y, tableW, rH, 'F')
+
+    // Linha divisória inferior
+    doc.setDrawColor(226, 232, 240)
+    doc.setLineWidth(0.2)
+    doc.line(m, y + rH, m + tableW, y + rH)
+
+    // Células
+    let xc = m
+    row.forEach((cell, i) => {
+      const al = aligns?.[i] || 'left'
+      const xT = al === 'right' ? xc + colWidths[i] - 3 : (al === 'center' ? xc + colWidths[i] / 2 : xc + 3)
+      doc.setTextColor(30, 41, 59)
+      doc.setFontSize(8.5)
+      // Coluna Nº e Total em negrito
+      doc.setFont('helvetica', (i === 0 || i === row.length - 1) ? 'bold' : 'normal')
+      doc.text(String(cell), xT, y + 5.2, { align: al })
+      xc += colWidths[i]
+    })
+
+    y += rH
+  })
+
+  // Borda externa da tabela
+  const tableStartY = y - rows.length * rH - hH
+  doc.setDrawColor(203, 213, 225)
+  doc.setLineWidth(0.5)
+  doc.rect(m, tableStartY, tableW, rows.length * rH + hH, 'S')
+
+  return y + 5
+}
+
+/* Linha totalizadora abaixo da tabela */
+function _pdfTotalRow(doc, y, label, valor) {
+  const m = 14, W = 210
+  doc.setFillColor(30, 41, 59)
+  doc.rect(m, y, W - m * 2, 9, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.text(label, m + 3, y + 6)
+  doc.text(valor, W - m - 3, y + 6, { align: 'right' })
+  return y + 9 + 4
+}
+
+/* Rodapé em todas as páginas */
+function _pdfFooter(doc, isConfidential = false) {
+  const totalPages = doc.internal.getNumberOfPages()
+  const W = 210
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p)
+    doc.setDrawColor(226, 232, 240)
+    doc.setLineWidth(0.5)
+    doc.line(14, 285, W - 14, 285)
+    doc.setTextColor(148, 163, 184)
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.text('Baby Store — Sistema PDV', 14, 290)
+    doc.text(`Página ${p} de ${totalPages}`, W / 2, 290, { align: 'center' })
+    const footerRight = isConfidential ? '🔒 Documento confidencial' : 'Gerado automaticamente'
+    doc.text(footerRight, W - 14, 290, { align: 'right' })
+  }
+}
+
+/* Mensagem de "sem dados" */
+function _pdfSemDados(doc, y, msg = 'Nenhum registro encontrado para este período.') {
+  doc.setFillColor(248, 250, 252)
+  doc.setDrawColor(226, 232, 240)
+  doc.setLineWidth(0.4)
+  doc.roundedRect(14, y, 182, 16, 2, 2, 'FD')
+  doc.setTextColor(148, 163, 184)
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'italic')
+  doc.text(msg, 105, y + 10, { align: 'center' })
+  return y + 22
+}
+
+/* ============================================================
+   PDF — EXPORTAR: VENDAS DE HOJE
+   ============================================================ */
+document.getElementById('btn-export-hoje').addEventListener('click', async () => {
   const dados = await api.vendasHoje()
-  const {doc,y:y0} = criarDocBase('Relatório de Vendas do Dia',
-    `Data: ${new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`)
-  let y=y0+6
-  doc.setFillColor(237,233,254); doc.roundedRect(14,y,55,18,3,3,'F')
-  doc.setTextColor(91,33,182); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Vendas',16,y+6)
-  doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(String(dados.totais.num_vendas),16,y+14)
-  doc.setFillColor(209,250,229); doc.roundedRect(74,y,65,18,3,3,'F')
-  doc.setTextColor(5,150,105); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Total Arrecadado',76,y+6)
-  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.text(fmtMoeda(dados.totais.total_vendas),76,y+14)
-  y+=26
-  const rows=(dados.vendas||[]).map(v=>[`#${v.id}`,fmtHora(v.criado_em),PAGAMENTO_LABEL[v.pagamento]||v.pagamento,`${v.num_itens}`,fmtMoeda(v.total)])
-  addTabela(doc,y,['Nº','Hora','Pagamento','Itens','Total'],rows)
-  doc.setTextColor(148,163,184); doc.setFontSize(8)
-  doc.text('Baby Store PDV',14,290); doc.text('Gerado automaticamente',196,290,{align:'right'})
-  doc.save(`vendas-hoje-${new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')}.pdf`)
-  toast('PDF exportado!','success')
+  const doc   = _novoPDF()
+  const hoje  = new Date()
+  const periodoStr = hoje.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+
+  let y = _pdfHeader(doc, 'Relatório de Vendas do Dia', periodoStr)
+
+  const ticket = dados.totais.num_vendas > 0
+    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
+
+  y = _pdfCards(doc, y, [
+    { label: 'Vendas realizadas', value: String(dados.totais.num_vendas), color: 'purple' },
+    { label: 'Total arrecadado',  value: fmtMoeda(dados.totais.total_vendas), color: 'green'  },
+    { label: 'Ticket médio',      value: fmtMoeda(ticket),                    color: 'gray'   },
+  ])
+
+  if (dados.vendas.length > 0) {
+    y = _pdfTable(doc, y, {
+      headers:   ['Nº', 'Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
+      colWidths: [18,   22,     68,                   22,      52],
+      aligns:    ['left','left','left',                'center','right'],
+      rows: dados.vendas.map(v => [
+        `#${v.id}`,
+        fmtHora(v.criado_em),
+        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
+        String(v.num_itens),
+        fmtMoeda(v.total)
+      ])
+    })
+    _pdfTotalRow(doc, y - 5, 'TOTAL DO DIA', fmtMoeda(dados.totais.total_vendas))
+  } else {
+    _pdfSemDados(doc, y, 'Nenhuma venda registrada hoje.')
+  }
+
+  _pdfFooter(doc)
+  doc.save(`vendas-hoje-${hoje.toLocaleDateString('pt-BR').replace(/\//g, '-')}.pdf`)
+  toast('PDF exportado com sucesso!', 'success')
 })
 
-document.getElementById('btn-export-mensal').addEventListener('click', async ()=>{
-  const mes=parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano=parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados=await api.vendasMensais(mes,ano)
-  const {doc,y:y0}=criarDocBase('Histórico Mensal de Vendas',`Período: ${MESES_PT[mes]} de ${ano}`)
-  let y=y0+6
-  doc.setFillColor(237,233,254); doc.roundedRect(14,y,55,18,3,3,'F')
-  doc.setTextColor(91,33,182); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Vendas',16,y+6)
-  doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(String(dados.totais.num_vendas),16,y+14)
-  doc.setFillColor(209,250,229); doc.roundedRect(74,y,65,18,3,3,'F')
-  doc.setTextColor(5,150,105); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('Total',76,y+6)
-  doc.setFontSize(13); doc.setFont('helvetica','bold'); doc.text(fmtMoeda(dados.totais.total_vendas),76,y+14)
-  y+=26
-  const rows=(dados.vendas||[]).map(v=>[`#${v.id}`,fmtDH(v.criado_em),PAGAMENTO_LABEL[v.pagamento]||v.pagamento,`${v.num_itens}`,fmtMoeda(v.total)])
-  addTabela(doc,y,['Nº','Data/Hora','Pagamento','Itens','Total'],rows)
-  doc.setTextColor(148,163,184); doc.setFontSize(8)
-  doc.text('Baby Store PDV',14,290); doc.text('Gerado automaticamente',196,290,{align:'right'})
+/* ============================================================
+   PDF — EXPORTAR: HISTÓRICO MENSAL
+   ============================================================ */
+document.getElementById('btn-export-mensal').addEventListener('click', async () => {
+  const mes   = parseInt(document.getElementById('sel-mes-mensal').value)
+  const ano   = parseInt(document.getElementById('sel-ano-mensal').value)
+  const dados = await api.vendasMensais(mes, ano)
+  const doc   = _novoPDF()
+
+  let y = _pdfHeader(doc, 'Histórico Mensal de Vendas', `Período: ${MESES_PT[mes]} de ${ano}`)
+
+  const ticket = dados.totais.num_vendas > 0
+    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
+
+  y = _pdfCards(doc, y, [
+    { label: 'Vendas no mês',    value: String(dados.totais.num_vendas),      color: 'purple' },
+    { label: 'Total arrecadado', value: fmtMoeda(dados.totais.total_vendas),  color: 'green'  },
+    { label: 'Ticket médio',     value: fmtMoeda(ticket),                     color: 'gray'   },
+  ])
+
+  if (dados.vendas.length > 0) {
+    y = _pdfTable(doc, y, {
+      headers:   ['Nº', 'Data / Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
+      colWidths: [18,   42,            60,                   20,      42],
+      aligns:    ['left','left',        'left',               'center','right'],
+      rows: dados.vendas.map(v => [
+        `#${v.id}`,
+        fmtDH(v.criado_em),
+        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
+        String(v.num_itens),
+        fmtMoeda(v.total)
+      ])
+    })
+    _pdfTotalRow(doc, y - 5, `TOTAL DE ${MESES_PT[mes].toUpperCase()}/${ano}`, fmtMoeda(dados.totais.total_vendas))
+  } else {
+    _pdfSemDados(doc, y, `Nenhuma venda em ${MESES_PT[mes]}/${ano}.`)
+  }
+
+  _pdfFooter(doc)
   doc.save(`vendas-${MESES_PT[mes].toLowerCase()}-${ano}.pdf`)
-  toast('PDF exportado!','success')
+  toast('PDF exportado com sucesso!', 'success')
 })
 
 /* ============================================================
@@ -857,31 +1110,102 @@ async function carregarAdminLucro() {
 
 document.getElementById('admin-btn-buscar-lucro').addEventListener('click', carregarAdminLucro)
 
-document.getElementById('admin-btn-export-lucro').addEventListener('click', async ()=>{
-  const mes=parseInt(document.getElementById('admin-sel-mes-lucro').value)
-  const ano=parseInt(document.getElementById('admin-sel-ano-lucro').value)
-  const {receita,custo,lucro}=await api.lucroMensal(mes,ano)
-  const pct=receita>0?((lucro/receita)*100).toFixed(1):'0'
-  const {doc,y:y0}=criarDocBase('Relatório de Lucratividade — CONFIDENCIAL',`Período: ${MESES_PT[mes]} de ${ano}`)
-  let y=y0+6
-  const cards=[
-    {label:'Receita Total',val:fmtMoeda(receita),fill:[209,250,229],text:[5,150,105]},
-    {label:'Custo Total',val:fmtMoeda(custo),fill:[254,226,226],text:[185,28,28]},
-    {label:'Lucro Líquido',val:fmtMoeda(lucro),fill:[237,233,254],text:[91,33,182]}
+document.getElementById('admin-btn-export-lucro').addEventListener('click', async () => {
+  const mes = parseInt(document.getElementById('admin-sel-mes-lucro').value)
+  const ano = parseInt(document.getElementById('admin-sel-ano-lucro').value)
+  const { receita, custo, lucro } = await api.lucroMensal(mes, ano)
+  const pct   = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
+  const doc   = _novoPDF()
+
+  let y = _pdfHeader(doc, 'Relatório de Lucratividade', `Período: ${MESES_PT[mes]} de ${ano}`, true)
+
+  y = _pdfCards(doc, y, [
+    { label: 'Receita total',  value: fmtMoeda(receita), color: 'green'  },
+    { label: 'Custo total',    value: fmtMoeda(custo),   color: 'red'    },
+    { label: 'Lucro líquido',  value: fmtMoeda(lucro),   color: lucro >= 0 ? 'purple' : 'red' },
+    { label: 'Margem de lucro',value: `${pct}%`,          color: parseFloat(pct) >= 0 ? 'orange' : 'red' },
+  ])
+
+  // Seção: Análise detalhada
+  doc.setFillColor(248, 250, 252)
+  doc.setDrawColor(226, 232, 240)
+  doc.setLineWidth(0.4)
+  doc.roundedRect(14, y, 182, 54, 3, 3, 'FD')
+
+  doc.setTextColor(30, 41, 59)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Análise Detalhada', 20, y + 9)
+
+  const linhas = [
+    ['Receita bruta (total de vendas):', fmtMoeda(receita)],
+    ['(-) Custo dos produtos vendidos:', fmtMoeda(custo)],
+    ['(=) Lucro operacional bruto:',     fmtMoeda(lucro)],
+    ['Margem de lucro sobre a receita:', `${pct}%`],
   ]
-  cards.forEach((c,i)=>{
-    const x=14+i*66
-    doc.setFillColor(...c.fill); doc.roundedRect(x,y,62,22,3,3,'F')
-    doc.setTextColor(...c.text); doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text(c.label,x+3,y+8)
-    doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(c.val,x+3,y+18)
+
+  doc.setFontSize(9)
+  linhas.forEach(([label, valor], i) => {
+    const ly = y + 18 + i * 9
+    const isTotalRow = i === 2
+    if (isTotalRow) {
+      doc.setDrawColor(209, 213, 219)
+      doc.setLineWidth(0.3)
+      doc.line(20, ly - 3, 196, ly - 3)
+    }
+    doc.setFont('helvetica', isTotalRow ? 'bold' : 'normal')
+    doc.setTextColor(isTotalRow ? 30 : 71, isTotalRow ? 41 : 85, isTotalRow ? 59 : 105)
+    doc.text(label, 20, ly)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(isTotalRow ? (lucro >= 0 ? 5 : 185) : 30, isTotalRow ? (lucro >= 0 ? 150 : 28) : 41, isTotalRow ? (lucro >= 0 ? 105 : 28) : 59)
+    doc.text(valor, 194, ly, { align: 'right' })
   })
-  y+=32
-  doc.setTextColor(30,41,59); doc.setFontSize(12); doc.setFont('helvetica','bold')
-  doc.text(`Margem de lucro: ${pct}%`,14,y)
-  doc.setTextColor(148,163,184); doc.setFontSize(8)
-  doc.text('Baby Store PDV — Documento confidencial do administrador',14,290)
+
+  y += 62
+
+  // Barra visual proporcional (se há receita)
+  if (receita > 0) {
+    const barW = 182
+    const barH = 10
+    const costoW = Math.min((custo / receita) * barW, barW)
+    const lucroW = Math.min((Math.max(lucro, 0) / receita) * barW, barW)
+
+    doc.setTextColor(71, 85, 105)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Composição da Receita', 14, y + 5)
+    y += 9
+
+    // Fundo da barra (receita)
+    doc.setFillColor(226, 232, 240)
+    doc.roundedRect(14, y, barW, barH, 2, 2, 'F')
+
+    // Custo (vermelho)
+    if (costoW > 0) {
+      doc.setFillColor(239, 68, 68)
+      doc.roundedRect(14, y, costoW, barH, 2, 2, 'F')
+    }
+
+    // Lucro (verde) — sobrepõe após custo
+    if (lucroW > 0) {
+      doc.setFillColor(16, 185, 129)
+      doc.roundedRect(14 + costoW, y, lucroW, barH, 2, 2, 'F')
+    }
+
+    y += barH + 5
+
+    // Legenda
+    doc.setFillColor(239, 68, 68); doc.rect(14, y, 8, 4, 'F')
+    doc.setTextColor(71, 85, 105); doc.setFontSize(8); doc.setFont('helvetica', 'normal')
+    doc.text(`Custo (${((custo/receita)*100).toFixed(1)}%)`, 24, y + 3.5)
+
+    doc.setFillColor(16, 185, 129); doc.rect(80, y, 8, 4, 'F')
+    doc.text(`Lucro (${pct}%)`, 90, y + 3.5)
+  }
+
+  _pdfFooter(doc, true)
   doc.save(`lucro-${MESES_PT[mes].toLowerCase()}-${ano}-admin.pdf`)
-  toast('PDF de lucro exportado!','success')
+  toast('PDF de lucro exportado!', 'success')
 })
 
 /* ============================================================
