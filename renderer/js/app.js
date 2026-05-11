@@ -612,118 +612,112 @@ async function verDetalhesVenda(id) {
   openModal('modal-detalhes-venda')
 }
 
-/* Gerar comprovante da venda */
+/* Gerar comprovante da venda — formato bobina térmica 80mm */
 async function gerarComprovante(vendaId) {
   if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
 
   const { venda, itens } = await api.detalhesVenda(vendaId)
   const { jsPDF } = window.jspdf
 
-  // Formato A5 (ideal para comprovante — metade de um A4)
-  const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' })
-  const W = 148, m = 12, cW = W - m * 2
+  const W = 80   // largura da bobina 80mm
+  const m = 5    // margem lateral
 
-  // ── Cabeçalho ──────────────────────────────────────────
-  doc.setFillColor(109, 40, 217)
-  doc.rect(0, 0, W, 32, 'F')
+  // Altura dinâmica: calcula com base nos itens
+  const alturaItens = itens.reduce((s, i) => s + (i.quantidade > 1 ? 11 : 6), 0)
+  const alturaTotal = 85 + alturaItens
 
-  // Círculo decorativo
-  doc.setFillColor(167, 139, 250); doc.circle(W - 16, 16, 12, 'F')
-  doc.setFillColor(124, 58, 237);  doc.circle(W - 16, 16, 8, 'F')
-  doc.setFillColor(196, 181, 253); doc.circle(W - 16, 16, 3, 'F')
+  const doc = new jsPDF({ unit: 'mm', format: [W, alturaTotal], orientation: 'portrait' })
 
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(18); doc.setFont('helvetica', 'bold')
-  doc.text('Baby Store', m, 14)
+  const solidLine = (y) => {
+    doc.setDrawColor(0); doc.setLineWidth(0.4); doc.setLineDash([], 0)
+    doc.line(m, y, W - m, y)
+  }
+  const dashLine = (y) => {
+    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.setLineDash([1.2, 1.2], 0)
+    doc.line(m, y, W - m, y)
+    doc.setLineDash([], 0)
+  }
 
-  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal')
-  doc.setTextColor(196, 181, 253)
-  doc.text('Comprovante de Venda', m, 21)
-  doc.text('Guarde este documento', m, 27)
+  let y = 8
 
-  // ── Informações da venda ────────────────────────────────
-  let y = 40
+  // ── CABEÇALHO ──────────────────────────────────────────
+  doc.setTextColor(0)
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold')
+  doc.text('BABY STORE', W / 2, y, { align: 'center' })
+  y += 5
 
-  doc.setFillColor(248, 250, 252)
-  doc.setDrawColor(226, 232, 240)
-  doc.roundedRect(m, y, cW, 24, 2, 2, 'FD')
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal')
+  doc.text('Comprovante de Venda', W / 2, y, { align: 'center' })
+  y += 7
 
-  doc.setTextColor(71, 85, 105); doc.setFontSize(8); doc.setFont('helvetica', 'bold')
-  doc.text('NUMERO DA VENDA', m + 4, y + 6)
-  doc.text('DATA E HORA', m + 4, y + 14)
-  doc.text('FORMA DE PAGAMENTO', m + 4, y + 22 - 1)
+  solidLine(y); y += 5
 
-  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'bold')
-  doc.text(`#${venda.id}`, W - m - 4, y + 6, { align: 'right' })
-  doc.text(fmtDH(venda.criado_em), W - m - 4, y + 14, { align: 'right' })
-  doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m - 4, y + 22 - 1, { align: 'right' })
+  // ── DADOS DA VENDA ──────────────────────────────────────
+  doc.setFontSize(8)
 
-  // ── Itens ───────────────────────────────────────────────
-  y += 30
+  doc.setFont('helvetica', 'normal'); doc.text('Venda:', m, y)
+  doc.setFont('helvetica', 'bold');   doc.text(`#${venda.id}`, W - m, y, { align: 'right' })
+  y += 5
 
-  doc.setFillColor(30, 41, 59)
-  doc.rect(m, y, cW, 8, 'F')
-  doc.setTextColor(255, 255, 255); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold')
-  doc.text('PRODUTO', m + 3, y + 5.5)
-  doc.text('QTD', m + cW - 34, y + 5.5, { align: 'center' })
-  doc.text('TOTAL', W - m - 3, y + 5.5, { align: 'right' })
-  y += 8
+  doc.setFont('helvetica', 'normal'); doc.text('Data/Hora:', m, y)
+  doc.setFont('helvetica', 'bold');   doc.text(fmtDH(venda.criado_em), W - m, y, { align: 'right' })
+  y += 5
 
-  itens.forEach((item, ri) => {
+  doc.setFont('helvetica', 'normal'); doc.text('Pagamento:', m, y)
+  doc.setFont('helvetica', 'bold');   doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m, y, { align: 'right' })
+  y += 7
+
+  solidLine(y); y += 4
+
+  // ── CABEÇALHO DA TABELA ────────────────────────────────
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold')
+  doc.text('PRODUTO', m, y)
+  doc.text('QTD', W - m - 18, y, { align: 'right' })
+  doc.text('TOTAL', W - m, y, { align: 'right' })
+  y += 3
+
+  dashLine(y); y += 4
+
+  // ── ITENS ───────────────────────────────────────────────
+  itens.forEach(item => {
     const subtotal = item.preco_unitario * item.quantidade
-    const rH = item.quantidade > 1 ? 12 : 8
+    const nomeMax  = 19
+    const nome     = item.nome_produto.length > nomeMax
+      ? item.nome_produto.slice(0, nomeMax) + '..' : item.nome_produto
 
-    if (y + rH > 195) { doc.addPage(); y = 12 }
-
-    doc.setFillColor(ri % 2 === 0 ? 248 : 255, ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 252 : 255)
-    doc.rect(m, y, cW, rH, 'F')
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2)
-    doc.line(m, y + rH, m + cW, y + rH)
-
-    doc.setTextColor(30, 41, 59); doc.setFontSize(8.5); doc.setFont('helvetica', 'bold')
-    // Nome truncado se muito longo
-    const nomeMax = 24
-    const nomeDisplay = item.nome_produto.length > nomeMax
-      ? item.nome_produto.slice(0, nomeMax) + '...' : item.nome_produto
-    doc.text(nomeDisplay, m + 3, y + 5.5)
-    doc.text(String(item.quantidade), m + cW - 34, y + 5.5, { align: 'center' })
-    doc.text(fmtMoeda(subtotal), W - m - 3, y + 5.5, { align: 'right' })
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
+    doc.text(nome, m, y)
+    doc.text(String(item.quantidade), W - m - 18, y, { align: 'right' })
+    doc.setFont('helvetica', 'bold')
+    doc.text(fmtMoeda(subtotal), W - m, y, { align: 'right' })
+    y += 5
 
     if (item.quantidade > 1) {
-      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139)
-      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m + 3, y + 10)
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
+      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m, y)
+      doc.setTextColor(0)
+      y += 6
     }
-
-    y += rH
   })
 
-  // Borda da tabela de itens
-  const tabelaStartY = y - itens.reduce((s, i) => s + (i.quantidade > 1 ? 12 : 8), 0) - 8
-  doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.4)
-  doc.rect(m, tabelaStartY, cW, y - tabelaStartY, 'S')
+  dashLine(y); y += 5
 
-  y += 4
+  // ── TOTAL ───────────────────────────────────────────────
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
+  doc.text('TOTAL:', m, y)
+  doc.text(fmtMoeda(venda.total), W - m, y, { align: 'right' })
+  y += 8
 
-  // ── Total ───────────────────────────────────────────────
-  doc.setFillColor(109, 40, 217)
-  doc.roundedRect(m, y, cW, 13, 2, 2, 'F')
-  doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold')
-  doc.text('TOTAL PAGO', m + 4, y + 9)
-  doc.setFontSize(13)
-  doc.text(fmtMoeda(venda.total), W - m - 4, y + 9, { align: 'right' })
+  solidLine(y); y += 7
 
-  y += 19
-
-  // ── Rodapé ──────────────────────────────────────────────
-  doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4)
-  doc.line(m, y, W - m, y)
-  y += 6
-
-  doc.setTextColor(148, 163, 184); doc.setFontSize(8); doc.setFont('helvetica', 'italic')
-  doc.text('Obrigado pela compra! Volte sempre.', W / 2, y, { align: 'center' })
+  // ── RODAPÉ ──────────────────────────────────────────────
+  doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(60)
+  doc.text('Obrigado pela compra!', W / 2, y, { align: 'center' })
   y += 5
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  doc.text('Baby Store — Sistema PDV', W / 2, y, { align: 'center' })
+  doc.text('Volte sempre.', W / 2, y, { align: 'center' })
+  y += 5
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100)
+  doc.text('Baby Store - Sistema PDV', W / 2, y, { align: 'center' })
 
   doc.save(`comprovante-venda-${venda.id}.pdf`)
   toast('Comprovante gerado!', 'success')
