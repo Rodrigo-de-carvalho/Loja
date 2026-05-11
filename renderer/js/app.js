@@ -5,13 +5,15 @@ const api = window.electronAPI
 /* ============================================================
    ESTADO
    ============================================================ */
-let todosProdutos   = []
-let carrinho        = []
-let produtoEditId   = null
-let codigoAtual     = ''
-let confirmCallback = null
-let isAdmin         = false
-let adminEditCustoId= null
+let todosProdutos    = []
+let carrinho         = []
+let produtoEditId    = null
+let codigoAtual      = ''
+let confirmCallback  = null
+let isAdmin          = false
+let adminEditCustoId = null
+let ultimaVendaId    = null
+let detalheVendaId   = null
 
 /* ============================================================
    UTILS
@@ -43,6 +45,14 @@ const PAGAMENTO_LABEL = {
   debito:   '💳 Débito',
   credito:  '💳 Crédito',
   dinheiro: '💵 Dinheiro'
+}
+
+// Versão sem emoji para uso em PDF (fontes padrão do jsPDF não suportam emoji)
+const PAGAMENTO_PDF = {
+  pix:      'PIX',
+  debito:   'Debito',
+  credito:  'Credito',
+  dinheiro: 'Dinheiro'
 }
 
 const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
@@ -468,13 +478,13 @@ document.querySelectorAll('.pagamento-btn').forEach(btn=>{
     const pagamento = btn.dataset.pag
     const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
     try {
-      await api.finalizarVenda({itens:carrinho, total, pagamento})
+      ultimaVendaId = await api.finalizarVenda({itens:carrinho, total, pagamento})
       document.getElementById('venda-ok-total').textContent = fmtMoeda(total)
       document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
       closeModal('modal-pagamento')
       carrinho = []
       renderCarrinho()
-      await carregarProdutos() // atualiza estoque
+      await carregarProdutos()
       openModal('modal-venda-ok')
     } catch(err) { toast(`Erro ao finalizar: ${err.message}`,'error') }
   })
@@ -484,6 +494,9 @@ document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
   closeModal('modal-venda-ok')
   document.getElementById('input-barcode').focus()
 })
+
+document.getElementById('btn-gerar-comprovante').addEventListener('click', ()=> gerarComprovante(ultimaVendaId))
+document.getElementById('btn-comprovante-detalhe').addEventListener('click', ()=> gerarComprovante(detalheVendaId))
 
 document.getElementById('btn-cancelar-venda').addEventListener('click', ()=>{
   if (!carrinho.length) { toast('Carrinho já está vazio.'); return }
@@ -584,6 +597,7 @@ document.getElementById('btn-buscar-mensal').addEventListener('click', carregarM
 
 /* Detalhes venda */
 async function verDetalhesVenda(id) {
+  detalheVendaId = id
   const {venda, itens} = await api.detalhesVenda(id)
   document.getElementById('detalhes-venda-titulo').textContent =
     `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}`
@@ -596,6 +610,123 @@ async function verDetalhesVenda(id) {
     </tr>`).join('')
   document.getElementById('detalhes-total-row').innerHTML = `Total: ${fmtMoeda(venda.total)}`
   openModal('modal-detalhes-venda')
+}
+
+/* Gerar comprovante da venda */
+async function gerarComprovante(vendaId) {
+  if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
+
+  const { venda, itens } = await api.detalhesVenda(vendaId)
+  const { jsPDF } = window.jspdf
+
+  // Formato A5 (ideal para comprovante — metade de um A4)
+  const doc = new jsPDF({ unit: 'mm', format: 'a5', orientation: 'portrait' })
+  const W = 148, m = 12, cW = W - m * 2
+
+  // ── Cabeçalho ──────────────────────────────────────────
+  doc.setFillColor(109, 40, 217)
+  doc.rect(0, 0, W, 32, 'F')
+
+  // Círculo decorativo
+  doc.setFillColor(167, 139, 250); doc.circle(W - 16, 16, 12, 'F')
+  doc.setFillColor(124, 58, 237);  doc.circle(W - 16, 16, 8, 'F')
+  doc.setFillColor(196, 181, 253); doc.circle(W - 16, 16, 3, 'F')
+
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(18); doc.setFont('helvetica', 'bold')
+  doc.text('Baby Store', m, 14)
+
+  doc.setFontSize(8.5); doc.setFont('helvetica', 'normal')
+  doc.setTextColor(196, 181, 253)
+  doc.text('Comprovante de Venda', m, 21)
+  doc.text('Guarde este documento', m, 27)
+
+  // ── Informações da venda ────────────────────────────────
+  let y = 40
+
+  doc.setFillColor(248, 250, 252)
+  doc.setDrawColor(226, 232, 240)
+  doc.roundedRect(m, y, cW, 24, 2, 2, 'FD')
+
+  doc.setTextColor(71, 85, 105); doc.setFontSize(8); doc.setFont('helvetica', 'bold')
+  doc.text('NUMERO DA VENDA', m + 4, y + 6)
+  doc.text('DATA E HORA', m + 4, y + 14)
+  doc.text('FORMA DE PAGAMENTO', m + 4, y + 22 - 1)
+
+  doc.setTextColor(30, 41, 59); doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+  doc.text(`#${venda.id}`, W - m - 4, y + 6, { align: 'right' })
+  doc.text(fmtDH(venda.criado_em), W - m - 4, y + 14, { align: 'right' })
+  doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m - 4, y + 22 - 1, { align: 'right' })
+
+  // ── Itens ───────────────────────────────────────────────
+  y += 30
+
+  doc.setFillColor(30, 41, 59)
+  doc.rect(m, y, cW, 8, 'F')
+  doc.setTextColor(255, 255, 255); doc.setFontSize(7.5); doc.setFont('helvetica', 'bold')
+  doc.text('PRODUTO', m + 3, y + 5.5)
+  doc.text('QTD', m + cW - 34, y + 5.5, { align: 'center' })
+  doc.text('TOTAL', W - m - 3, y + 5.5, { align: 'right' })
+  y += 8
+
+  itens.forEach((item, ri) => {
+    const subtotal = item.preco_unitario * item.quantidade
+    const rH = item.quantidade > 1 ? 12 : 8
+
+    if (y + rH > 195) { doc.addPage(); y = 12 }
+
+    doc.setFillColor(ri % 2 === 0 ? 248 : 255, ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 252 : 255)
+    doc.rect(m, y, cW, rH, 'F')
+    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.2)
+    doc.line(m, y + rH, m + cW, y + rH)
+
+    doc.setTextColor(30, 41, 59); doc.setFontSize(8.5); doc.setFont('helvetica', 'bold')
+    // Nome truncado se muito longo
+    const nomeMax = 24
+    const nomeDisplay = item.nome_produto.length > nomeMax
+      ? item.nome_produto.slice(0, nomeMax) + '...' : item.nome_produto
+    doc.text(nomeDisplay, m + 3, y + 5.5)
+    doc.text(String(item.quantidade), m + cW - 34, y + 5.5, { align: 'center' })
+    doc.text(fmtMoeda(subtotal), W - m - 3, y + 5.5, { align: 'right' })
+
+    if (item.quantidade > 1) {
+      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139)
+      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m + 3, y + 10)
+    }
+
+    y += rH
+  })
+
+  // Borda da tabela de itens
+  const tabelaStartY = y - itens.reduce((s, i) => s + (i.quantidade > 1 ? 12 : 8), 0) - 8
+  doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.4)
+  doc.rect(m, tabelaStartY, cW, y - tabelaStartY, 'S')
+
+  y += 4
+
+  // ── Total ───────────────────────────────────────────────
+  doc.setFillColor(109, 40, 217)
+  doc.roundedRect(m, y, cW, 13, 2, 2, 'F')
+  doc.setTextColor(255, 255, 255); doc.setFontSize(10); doc.setFont('helvetica', 'bold')
+  doc.text('TOTAL PAGO', m + 4, y + 9)
+  doc.setFontSize(13)
+  doc.text(fmtMoeda(venda.total), W - m - 4, y + 9, { align: 'right' })
+
+  y += 19
+
+  // ── Rodapé ──────────────────────────────────────────────
+  doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.4)
+  doc.line(m, y, W - m, y)
+  y += 6
+
+  doc.setTextColor(148, 163, 184); doc.setFontSize(8); doc.setFont('helvetica', 'italic')
+  doc.text('Obrigado pela compra! Volte sempre.', W / 2, y, { align: 'center' })
+  y += 5
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+  doc.text('Baby Store — Sistema PDV', W / 2, y, { align: 'center' })
+
+  doc.save(`comprovante-venda-${venda.id}.pdf`)
+  toast('Comprovante gerado!', 'success')
 }
 
 /* ============================================================
@@ -824,7 +955,7 @@ function _pdfFooter(doc, isConfidential = false) {
     doc.setFont('helvetica', 'normal')
     doc.text('Baby Store — Sistema PDV', 14, 290)
     doc.text(`Página ${p} de ${totalPages}`, W / 2, 290, { align: 'center' })
-    const footerRight = isConfidential ? '🔒 Documento confidencial' : 'Gerado automaticamente'
+    const footerRight = isConfidential ? 'Documento confidencial' : 'Gerado automaticamente'
     doc.text(footerRight, W - 14, 290, { align: 'right' })
   }
 }
@@ -870,7 +1001,7 @@ document.getElementById('btn-export-hoje').addEventListener('click', async () =>
       rows: dados.vendas.map(v => [
         `#${v.id}`,
         fmtHora(v.criado_em),
-        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
+        PAGAMENTO_PDF[v.pagamento] || v.pagamento,
         String(v.num_itens),
         fmtMoeda(v.total)
       ])
@@ -913,7 +1044,7 @@ document.getElementById('btn-export-mensal').addEventListener('click', async () 
       rows: dados.vendas.map(v => [
         `#${v.id}`,
         fmtDH(v.criado_em),
-        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
+        PAGAMENTO_PDF[v.pagamento] || v.pagamento,
         String(v.num_itens),
         fmtMoeda(v.total)
       ])
