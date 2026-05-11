@@ -246,7 +246,7 @@
         <div class="card table-card">
           <table class="table">
             <thead>
-              <tr><th>Nº</th><th>Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th>Ações</th></tr>
+              <tr><th>Nº</th><th>Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th></th></tr>
             </thead>
             <tbody id="tbody-hoje"></tbody>
           </table>
@@ -267,7 +267,7 @@
         <div class="card table-card">
           <table class="table">
             <thead>
-              <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th>Ações</th></tr>
+              <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th></th></tr>
             </thead>
             <tbody id="tbody-mensal"></tbody>
           </table>
@@ -314,6 +314,7 @@
           <button class="tab-btn active" data-admin-tab="custos">💰 Preços de Custo</button>
           <button class="tab-btn" data-admin-tab="estoque">📦 Estoque</button>
           <button class="tab-btn" data-admin-tab="lucro">📊 Lucro Mensal</button>
+          <button class="tab-btn" data-admin-tab="estornos">↩ Estornos</button>
         </div>
 
         <!-- Custos -->
@@ -372,6 +373,35 @@
           <div class="card" id="admin-lucro-chart" style="padding:24px; display:none;">
             <h3 style="margin-bottom:16px;">Composição da Receita</h3>
             <div id="admin-lucro-bar"></div>
+          </div>
+        </div>
+
+        <!-- Estornos -->
+        <div id="admin-tab-estornos" class="tab-pane">
+          <div class="relatorio-toolbar">
+            <div class="date-picker-group">
+              <select id="admin-sel-mes-estornos"></select>
+              <select id="admin-sel-ano-estornos"></select>
+              <button class="btn btn-secondary" id="admin-btn-buscar-estornos">Buscar</button>
+            </div>
+          </div>
+          <p class="page-sub" style="margin-bottom:16px;">
+            Apenas administradores podem estornar vendas. O estorno remove o registro e devolve os itens ao estoque.
+          </p>
+          <div class="card table-card">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nº</th>
+                  <th>Data/Hora</th>
+                  <th>Pagamento</th>
+                  <th>Itens</th>
+                  <th>Total</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-admin-estornos"></tbody>
+            </table>
           </div>
         </div>
       </div>

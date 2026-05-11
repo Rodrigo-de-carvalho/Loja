@@ -191,11 +191,13 @@ class Database {
   lucroMensal(mes, ano) {
     const m = String(mes).padStart(2, '0')
     const a = String(ano)
+    // receita: todos os itens (com ou sem custo)
+    // custo/lucro: apenas itens com preco_custo > 0 (sem custo = ignorado no lucro)
     return this.db.prepare(`
       SELECT
-        COALESCE(SUM(iv.preco_unitario * iv.quantidade), 0)                    AS receita,
-        COALESCE(SUM(iv.preco_custo    * iv.quantidade), 0)                    AS custo,
-        COALESCE(SUM((iv.preco_unitario - iv.preco_custo) * iv.quantidade), 0) AS lucro
+        COALESCE(SUM(iv.preco_unitario * iv.quantidade), 0) AS receita,
+        COALESCE(SUM(CASE WHEN iv.preco_custo > 0 THEN iv.preco_custo * iv.quantidade ELSE 0 END), 0) AS custo,
+        COALESCE(SUM(CASE WHEN iv.preco_custo > 0 THEN (iv.preco_unitario - iv.preco_custo) * iv.quantidade ELSE 0 END), 0) AS lucro
       FROM itens_venda iv
       JOIN vendas v ON iv.venda_id = v.id
       WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=?

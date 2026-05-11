@@ -531,8 +531,8 @@ function initDateSelectors() {
   ;['sel-ano-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=anoOpts })
 
   // Admin selectors
-  ;['admin-sel-mes-lucro'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=mesOpts })
-  ;['admin-sel-ano-lucro'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=anoOpts })
+  ;['admin-sel-mes-lucro','admin-sel-mes-estornos'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=mesOpts })
+  ;['admin-sel-ano-lucro','admin-sel-ano-estornos'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=anoOpts })
 }
 
 async function carregarHoje() {
@@ -554,12 +554,7 @@ async function carregarHoje() {
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
         <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td>
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
-            <button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button>
-          </div>
-        </td>
+        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
       </tr>`).join('')
 }
 
@@ -584,12 +579,7 @@ async function carregarMensal() {
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
         <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td>
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button>
-            <button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button>
-          </div>
-        </td>
+        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
       </tr>`).join('')
 }
 
@@ -1123,10 +1113,31 @@ document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
     document.querySelectorAll('#admin-painel .tab-pane').forEach(p=>p.classList.remove('active'))
     btn.classList.add('active')
     document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
-    if(btn.dataset.adminTab==='custos')  carregarAdminCustos()
-    if(btn.dataset.adminTab==='estoque') carregarAdminEstoque()
+    if(btn.dataset.adminTab==='custos')   carregarAdminCustos()
+    if(btn.dataset.adminTab==='estoque')  carregarAdminEstoque()
+    if(btn.dataset.adminTab==='estornos') carregarAdminEstornos()
   })
 })
+
+/* --- Aba: Estornos (admin) --- */
+async function carregarAdminEstornos() {
+  const mes = parseInt(document.getElementById('admin-sel-mes-estornos').value)
+  const ano = parseInt(document.getElementById('admin-sel-ano-estornos').value)
+  const dados = await api.vendasMensais(mes, ano)
+  const tbody = document.getElementById('tbody-admin-estornos')
+  tbody.innerHTML = !dados.vendas.length
+    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
+    : dados.vendas.map(v=>`<tr>
+        <td><code>#${v.id}</code></td>
+        <td>${fmtDH(v.criado_em)}</td>
+        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
+        <td><strong>${fmtMoeda(v.total)}</strong></td>
+        <td><button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button></td>
+      </tr>`).join('')
+}
+
+document.getElementById('admin-btn-buscar-estornos').addEventListener('click', carregarAdminEstornos)
 
 /* --- Aba: Preços de Custo --- */
 async function carregarAdminCustos() {
@@ -1366,11 +1377,7 @@ async function estornarVenda(id) {
         await api.cancelarVenda(id)
         toast(`Venda #${id} estornada. Estoque restaurado.`, 'success')
         await carregarProdutos()
-        // Recarrega a aba ativa de relatórios
-        const tabHoje   = document.getElementById('tab-hoje')
-        const tabMensal = document.getElementById('tab-mensal')
-        if (tabHoje.classList.contains('active'))   carregarHoje()
-        if (tabMensal.classList.contains('active')) carregarMensal()
+        carregarAdminEstornos()
       } catch(err) {
         toast(`Erro ao estornar: ${err.message}`, 'error')
       }
