@@ -1,13 +1,14 @@
 {
-  "name": "loja-bebe-pdv",
+  "name": "cantinho-do-bebe-pdv",
   "version": "1.0.0",
-  "description": "Sistema PDV para Loja de Roupas de Bebê",
+  "description": "Sistema PDV — Cantinho do Bebê",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "build": "electron-builder --publish never"
+    "postinstall": "electron-builder install-app-deps",
+    "build": "electron-builder --win --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
@@ -16,28 +17,48 @@
   },
   "devDependencies": {
     "electron": "^29.1.0",
-    "electron-rebuild": "^3.2.9",
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.lojabebe.pdv",
-    "productName": "Loja Bebê PDV",
+    "appId": "com.cantinhodobebe.pdv",
+    "productName": "Cantinho do Bebe PDV",
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**"
     ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "database.js",
+      "renderer/**/*",
+      "node_modules/**/*"
+    ],
     "directories": {
       "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cantinho do Bebe PDV",
+      "installerHeaderIcon": "",
+      "deleteAppDataOnUninstall": false,
+      "license": null,
+      "artifactName": "Cantinho-do-Bebe-PDV-Instalador.exe"
     },
     "linux": {
       "target": "AppImage",
       "category": "Office"
-    },
-    "win": {
-      "target": "nsis"
-    },
-    "mac": {
-      "target": "dmg"
     }
   }
 }
