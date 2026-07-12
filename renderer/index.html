@@ -166,6 +166,7 @@
         </div>
         <button class="btn btn-secondary" id="btn-add-item">Adicionar</button>
         <button class="btn btn-outline"   id="btn-buscar-produto-nome">Buscar por nome</button>
+        <button class="btn btn-outline"   id="btn-iniciar-troca">🔁 Troca</button>
       </div>
 
       <div class="caixa-grid">
@@ -208,7 +209,17 @@
             <div class="resumo-row">
               <span>Subtotal:</span><strong id="resumo-subtotal">R$ 0,00</strong>
             </div>
+            <div class="resumo-row" id="resumo-desconto-row" style="display:none; color:var(--danger);">
+              <span>Desconto:</span><strong id="resumo-desconto">− R$ 0,00</strong>
+            </div>
+            <div class="resumo-row" id="resumo-troca-row" style="display:none; color:var(--danger);">
+              <span>Devolução (troca #<span id="resumo-troca-ref"></span>):</span>
+              <strong id="resumo-troca-credito">− R$ 0,00</strong>
+            </div>
           </div>
+          <button class="btn btn-outline btn-block" id="btn-aplicar-desconto">
+            💸 Desconto
+          </button>
           <button class="btn btn-success btn-block" id="btn-finalizar-venda" disabled>
             ✅ Finalizar Venda
           </button>
@@ -448,13 +459,13 @@
             <label>Preço de Venda (R$) <span class="required">*</span></label>
             <input type="number" id="produto-venda" placeholder="0,00" min="0" step="0.01" required>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="produto-estoque-group" style="display:none;">
             <label>Estoque inicial</label>
             <input type="number" id="produto-estoque" placeholder="0" min="0" value="0">
-            <p class="empty-hint" id="produto-estoque-hint" style="display:none; margin-top:6px;">
-              Somente o administrador pode alterar o estoque de um produto já cadastrado.
-            </p>
           </div>
+          <p class="empty-hint" id="produto-estoque-hint" style="display:none; margin-bottom:12px;">
+            O estoque é gerenciado pelo administrador no painel Administrador → Estoque.
+          </p>
           <div class="form-group">
             <label>Código de Barras</label>
             <div class="barcode-box">
@@ -483,7 +494,14 @@
         <div class="pagamento-total-row">
           Total: <strong id="pagamento-total-valor"></strong>
         </div>
-        <p style="font-size:13px; color:var(--text-muted);">Selecione a forma de pagamento:</p>
+
+        <!-- Troca com total zero ou a devolver: sem forma de pagamento -->
+        <div id="pagamento-troca-box" style="display:none;">
+          <p style="font-size:14px; margin-bottom:12px;" id="pagamento-troca-msg"></p>
+          <button class="btn btn-success btn-block" id="btn-concluir-troca">✅ Concluir Troca</button>
+        </div>
+
+        <p style="font-size:13px; color:var(--text-muted);" id="pagamento-escolha-label">Selecione a forma de pagamento:</p>
         <div class="pagamento-grid">
           <button class="pagamento-btn" data-pag="pix">
             <span class="pag-icon">📱</span>
@@ -518,6 +536,88 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close="modal-pagamento">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: TROCA DE MERCADORIA
+       ================================ -->
+  <div class="modal-overlay" id="modal-troca">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>🔁 Troca de Mercadoria</h2>
+        <button class="modal-close" data-close="modal-troca">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+          Informe o número da venda original (está no comprovante). Selecione o que o cliente
+          está devolvendo — o valor vira crédito e você adiciona os novos produtos no carrinho normalmente.
+        </p>
+        <div style="display:flex; gap:10px; margin-bottom:16px;">
+          <input type="number" id="input-troca-venda" placeholder="Nº da venda (ex: 123)" min="1"
+                 style="width:200px; padding:10px 12px; border:1px solid var(--border); border-radius:8px;">
+          <button class="btn btn-secondary" id="btn-buscar-troca">Buscar venda</button>
+        </div>
+        <div id="troca-venda-info" style="display:none;">
+          <p id="troca-venda-titulo" style="font-weight:600; margin-bottom:10px;"></p>
+          <div class="card table-card" style="max-height:280px; overflow-y:auto;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Preço pago</th>
+                  <th>Comprado</th>
+                  <th>Já devolvido?</th>
+                  <th style="width:150px;">Devolver agora</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-troca-itens"></tbody>
+            </table>
+          </div>
+          <div class="pagamento-total-row" style="margin-top:12px;">
+            Crédito da devolução: <strong id="troca-credito-preview">R$ 0,00</strong>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-troca">Cancelar</button>
+        <button class="btn btn-primary" id="btn-confirmar-troca" disabled>Aplicar devolução no caixa</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: DESCONTO
+       ================================ -->
+  <div class="modal-overlay" id="modal-desconto">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>💸 Aplicar Desconto</h2>
+        <button class="modal-close" data-close="modal-desconto">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="pagamento-total-row" style="margin-bottom:12px;">
+          Subtotal dos produtos: <strong id="desconto-subtotal"></strong>
+        </div>
+        <div class="form-group">
+          <label>Tipo de desconto</label>
+          <select id="desconto-tipo">
+            <option value="valor">Valor em R$</option>
+            <option value="percentual">Percentual (%)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Desconto</label>
+          <input type="number" id="desconto-valor" min="0" step="0.01" placeholder="0,00">
+        </div>
+        <div class="pagamento-total-row">
+          Total com desconto: <strong id="desconto-preview">—</strong>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-remover-desconto">Remover desconto</button>
+        <button class="btn btn-primary" id="btn-salvar-desconto">Aplicar</button>
       </div>
     </div>
   </div>
@@ -598,7 +698,7 @@
       </div>
       <div class="modal-body" style="text-align:center; padding:32px 24px;">
         <div style="font-size:52px; margin-bottom:12px;">🎉</div>
-        <p style="font-size:14px; color:var(--text-muted); margin-bottom:4px;">Total cobrado:</p>
+        <p style="font-size:14px; color:var(--text-muted); margin-bottom:4px;" id="venda-ok-total-label">Total cobrado:</p>
         <p class="total-value" id="venda-ok-total" style="font-size:34px; margin-bottom:8px;"></p>
         <p class="pagamento-label-ok" id="venda-ok-pagamento"></p>
         <p class="pagamento-label-ok" id="venda-ok-troco" style="display:none; margin-top:8px; font-weight:700;"></p>

@@ -6,7 +6,7 @@ const BetterSqlite3 = require('better-sqlite3')
 const ADMIN_EMAIL_HASH = '6ff4f69da1225301e0c5d874fbc6e144ccdf38c7b257c88d4446cae6da41aaf1'
 const ADMIN_SENHA_HASH = 'c3c8fde393540458b1ba7e2ad8045d42bfcf814aef3a549abbb10973a97ad6eb'
 
-const FORMAS_PAGAMENTO = ['dinheiro', 'pix', 'debito', 'credito']
+const FORMAS_PAGAMENTO = ['dinheiro', 'pix', 'debito', 'credito', 'troca']
 
 class Database {
   constructor(dbPath) {
@@ -35,6 +35,9 @@ class Database {
         total          REAL    NOT NULL DEFAULT 0,
         pagamento      TEXT    NOT NULL DEFAULT 'dinheiro',
         status         TEXT    NOT NULL DEFAULT 'concluida',
+        tipo           TEXT    NOT NULL DEFAULT 'venda',
+        desconto       REAL    NOT NULL DEFAULT 0,
+        venda_ref      INTEGER,
         valor_recebido REAL,
         troco          REAL,
         estornada_em   TEXT,
@@ -48,7 +51,8 @@ class Database {
         nome_produto   TEXT    NOT NULL,
         quantidade     INTEGER NOT NULL DEFAULT 1,
         preco_unitario REAL    NOT NULL DEFAULT 0,
-        preco_custo    REAL    NOT NULL DEFAULT 0
+        preco_custo    REAL    NOT NULL DEFAULT 0,
+        ref_item_id    INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS admin_config (
@@ -85,6 +89,20 @@ class Database {
     }
     if (!temCol('estornada_em')) {
       this.db.exec('ALTER TABLE vendas ADD COLUMN estornada_em TEXT')
+    }
+    if (!temCol('tipo')) {
+      this.db.exec("ALTER TABLE vendas ADD COLUMN tipo TEXT NOT NULL DEFAULT 'venda'")
+    }
+    if (!temCol('desconto')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN desconto REAL NOT NULL DEFAULT 0')
+    }
+    if (!temCol('venda_ref')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN venda_ref INTEGER')
+    }
+
+    const colsItem = this.db.prepare('PRAGMA table_info(itens_venda)').all()
+    if (!colsItem.some(c => c.name === 'ref_item_id')) {
+      this.db.exec('ALTER TABLE itens_venda ADD COLUMN ref_item_id INTEGER')
     }
   }
 
@@ -164,28 +182,45 @@ class Database {
    * o renderer envia apenas produto_id + quantidade. Estoque é validado
    * antes de deduzir, para que o estorno possa devolver a quantidade
    * integral sem inflar o estoque.
+   *
+   * Troca: `devolvidos` referencia itens da venda original (venda_ref);
+   * eles entram como quantidade NEGATIVA (crédito com o preço pago na
+   * época) e voltam ao estoque. O total pode ficar negativo — nesse caso
+   * `troco` guarda o valor a devolver ao cliente.
+   *
+   * Desconto: aplicado sobre os produtos novos, gravado em vendas.desconto.
    */
-  finalizarVenda({ itens, pagamento, valor_recebido }) {
-    if (!Array.isArray(itens) || itens.length === 0) throw new Error('A venda não possui itens.')
+  finalizarVenda({ itens, pagamento, valor_recebido, desconto, venda_ref, devolvidos }) {
+    const novos = Array.isArray(itens) ? itens : []
+    const devs  = Array.isArray(devolvidos) ? devolvidos : []
+    if (!novos.length && !devs.length) throw new Error('A venda não possui itens.')
+    if (devs.length && !venda_ref) throw new Error('Troca sem venda de origem.')
     const pag = FORMAS_PAGAMENTO.includes(pagamento) ? pagamento : 'dinheiro'
 
     const getProduto  = this.db.prepare('SELECT * FROM produtos WHERE id = ?')
-    const insertVenda = this.db.prepare(
-      'INSERT INTO vendas (total, pagamento, valor_recebido, troco) VALUES (?, ?, ?, ?)'
-    )
-    const insertItem = this.db.prepare(`
-      INSERT INTO itens_venda (venda_id, produto_id, nome_produto, quantidade, preco_unitario, preco_custo)
-      VALUES (?, ?, ?, ?, ?, ?)
+    const getVenda    = this.db.prepare('SELECT * FROM vendas WHERE id = ?')
+    const getItem     = this.db.prepare('SELECT * FROM itens_venda WHERE id = ?')
+    const jaDevolvido = this.db.prepare(`
+      SELECT COALESCE(SUM(-iv.quantidade), 0) AS q
+      FROM itens_venda iv JOIN vendas v ON iv.venda_id = v.id
+      WHERE iv.ref_item_id = ? AND iv.quantidade < 0 AND v.status = 'concluida'
     `)
-    const decrEstoque = this.db.prepare(
-      'UPDATE produtos SET estoque = estoque - ? WHERE id = ?'
-    )
+    const insertVenda = this.db.prepare(`
+      INSERT INTO vendas (total, pagamento, valor_recebido, troco, desconto, tipo, venda_ref)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertItem = this.db.prepare(`
+      INSERT INTO itens_venda (venda_id, produto_id, nome_produto, quantidade, preco_unitario, preco_custo, ref_item_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    const decrEstoque = this.db.prepare('UPDATE produtos SET estoque = estoque - ? WHERE id = ?')
+    const incrEstoque = this.db.prepare('UPDATE produtos SET estoque = estoque + ? WHERE id = ?')
 
     const transacao = this.db.transaction(() => {
-      let total = 0
-      const linhas = []
-
-      for (const item of itens) {
+      /* Produtos novos (levados) */
+      let subtotal = 0
+      const linhasNovas = []
+      for (const item of novos) {
         const qtd = Math.floor(Number(item.quantidade))
         if (!Number.isFinite(qtd) || qtd <= 0) throw new Error('Quantidade inválida em um dos itens.')
         const prod = getProduto.get(item.produto_id)
@@ -193,34 +228,99 @@ class Database {
         if (prod.estoque < qtd) {
           throw new Error(`Estoque insuficiente para "${prod.nome}": disponível ${prod.estoque}, solicitado ${qtd}.`)
         }
-        total += prod.preco_venda * qtd
-        linhas.push({ prod, qtd })
+        subtotal += prod.preco_venda * qtd
+        linhasNovas.push({ prod, qtd })
       }
-      total = Math.round(total * 100) / 100
+      subtotal = Math.round(subtotal * 100) / 100
+
+      /* Desconto sobre os produtos novos */
+      let desc = Math.round(Number(desconto || 0) * 100) / 100
+      if (!Number.isFinite(desc) || desc < 0) throw new Error('Desconto inválido.')
+      if (desc > subtotal) throw new Error('O desconto não pode ser maior que o valor dos produtos.')
+
+      /* Itens devolvidos (troca) — crédito com o preço pago na venda original */
+      let credito = 0
+      const linhasDev = []
+      if (devs.length) {
+        const orig = getVenda.get(venda_ref)
+        if (!orig) throw new Error(`Venda #${venda_ref} não encontrada para a troca.`)
+        if (orig.status !== 'concluida') throw new Error(`Venda #${venda_ref} foi estornada e não permite troca.`)
+        for (const dev of devs) {
+          const qtd = Math.floor(Number(dev.quantidade))
+          if (!Number.isFinite(qtd) || qtd <= 0) throw new Error('Quantidade de devolução inválida.')
+          const itemOrig = getItem.get(dev.item_id)
+          if (!itemOrig || itemOrig.venda_id !== Number(venda_ref) || itemOrig.quantidade <= 0) {
+            throw new Error('Item de devolução não pertence à venda informada.')
+          }
+          const restante = itemOrig.quantidade - jaDevolvido.get(itemOrig.id).q
+          if (qtd > restante) {
+            throw new Error(`"${itemOrig.nome_produto}": só ${restante} unidade(s) disponível(is) para devolução.`)
+          }
+          credito += itemOrig.preco_unitario * qtd
+          linhasDev.push({ itemOrig, qtd })
+        }
+      }
+      credito = Math.round(credito * 100) / 100
+
+      const total = Math.round((subtotal - desc - credito) * 100) / 100
 
       let recebido = null
       let troco    = null
-      if (pag === 'dinheiro' && valor_recebido !== null && valor_recebido !== undefined && valor_recebido !== '') {
+      if (pag === 'dinheiro' && total > 0 &&
+          valor_recebido !== null && valor_recebido !== undefined && valor_recebido !== '') {
         recebido = Math.round(Number(valor_recebido) * 100) / 100
         if (!Number.isFinite(recebido)) throw new Error('Valor recebido inválido.')
         if (recebido < total) throw new Error('Valor recebido é menor que o total da venda.')
         troco = Math.round((recebido - total) * 100) / 100
       }
+      // Total negativo em troca: valor a devolver ao cliente
+      if (total < 0) troco = Math.round(-total * 100) / 100
 
-      const { lastInsertRowid: vendaId } = insertVenda.run(total, pag, recebido, troco)
-      for (const { prod, qtd } of linhas) {
-        insertItem.run(vendaId, prod.id, prod.nome, qtd, prod.preco_venda, prod.preco_custo)
+      const tipo = devs.length ? 'troca' : 'venda'
+      const { lastInsertRowid: vendaId } = insertVenda.run(
+        total, pag, recebido, troco, desc, tipo, devs.length ? venda_ref : null
+      )
+      for (const { prod, qtd } of linhasNovas) {
+        insertItem.run(vendaId, prod.id, prod.nome, qtd, prod.preco_venda, prod.preco_custo, null)
         decrEstoque.run(qtd, prod.id)
       }
-      return { vendaId, total, troco }
+      for (const { itemOrig, qtd } of linhasDev) {
+        insertItem.run(vendaId, itemOrig.produto_id, itemOrig.nome_produto, -qtd,
+                       itemOrig.preco_unitario, itemOrig.preco_custo, itemOrig.id)
+        if (itemOrig.produto_id) incrEstoque.run(qtd, itemOrig.produto_id)
+      }
+      return { vendaId, total, subtotal, desconto: desc, credito, troco, tipo }
     })
 
     return transacao()
   }
 
+  /*
+   * Dados para montar uma troca: itens da venda original com a quantidade
+   * ainda disponível para devolução (desconta devoluções anteriores).
+   */
+  trocaInfo(vendaId) {
+    const venda = this.db.prepare('SELECT * FROM vendas WHERE id = ?').get(vendaId)
+    if (!venda) throw new Error(`Venda #${vendaId} não encontrada.`)
+    if (venda.status !== 'concluida') throw new Error(`Venda #${vendaId} foi estornada e não permite troca.`)
+
+    const jaDevolvido = this.db.prepare(`
+      SELECT COALESCE(SUM(-iv.quantidade), 0) AS q
+      FROM itens_venda iv JOIN vendas v ON iv.venda_id = v.id
+      WHERE iv.ref_item_id = ? AND iv.quantidade < 0 AND v.status = 'concluida'
+    `)
+    const itens = this.db
+      .prepare('SELECT * FROM itens_venda WHERE venda_id = ? AND quantidade > 0 ORDER BY id')
+      .all(vendaId)
+      .map(i => ({ ...i, disponivel: i.quantidade - jaDevolvido.get(i.id).q }))
+      .filter(i => i.disponivel > 0)
+
+    return { venda, itens }
+  }
+
   vendasHoje() {
     const vendas = this.db.prepare(`
-      SELECT v.id, v.total, v.pagamento, v.criado_em,
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
       WHERE date(v.criado_em) = date('now','localtime') AND v.status = 'concluida'
@@ -241,7 +341,7 @@ class Database {
     const a = String(ano)
 
     const vendas = this.db.prepare(`
-      SELECT v.id, v.total, v.pagamento, v.criado_em,
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
       WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=? AND v.status = 'concluida'
@@ -309,6 +409,13 @@ class Database {
       const venda = this.db.prepare('SELECT * FROM vendas WHERE id = ?').get(id)
       if (!venda) throw new Error(`Venda #${id} não encontrada.`)
       if (venda.status === 'estornada') throw new Error(`Venda #${id} já foi estornada.`)
+
+      const trocas = this.db.prepare(
+        "SELECT COUNT(*) AS n FROM vendas WHERE venda_ref = ? AND status = 'concluida'"
+      ).get(id).n
+      if (trocas > 0) {
+        throw new Error(`Venda #${id} possui troca(s) vinculada(s) e não pode ser estornada. Estorne as trocas primeiro.`)
+      }
 
       for (const item of getItens.all(id)) {
         if (item.produto_id) restaurarEstoque.run(item.quantidade, item.produto_id)

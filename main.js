@@ -56,7 +56,8 @@ function createWindow() {
 function registrarHandlers() {
   /* Produtos */
   ipcMain.handle('produtos:listar',          ()           => db.listarProdutos())
-  ipcMain.handle('produtos:criar',           (_, d)       => db.criarProduto(d))
+  // Estoque inicial só é aceito com sessão de admin; sem ela o produto entra com 0
+  ipcMain.handle('produtos:criar',           (_, d)       => db.criarProduto({ ...d, estoque: adminLogado ? d.estoque : 0 }))
   ipcMain.handle('produtos:atualizar',       (_, id, d)   => db.atualizarProduto(id, d))
   ipcMain.handle('produtos:deletar',         (_, id)      => db.deletarProduto(id))
   ipcMain.handle('produtos:buscarPorCodigo', (_, c)       => db.buscarPorCodigo(c))
@@ -88,6 +89,7 @@ function registrarHandlers() {
 
   /* Vendas */
   ipcMain.handle('vendas:finalizar',  (_, d)    => db.finalizarVenda(d))
+  ipcMain.handle('vendas:trocaInfo',  (_, id)   => db.trocaInfo(id))
   ipcMain.handle('vendas:hoje',       ()        => db.vendasHoje())
   ipcMain.handle('vendas:mensais',    (_, m, a) => db.vendasMensais(m, a))
   ipcMain.handle('vendas:detalhes',   (_, id)   => db.detalhesVenda(id))

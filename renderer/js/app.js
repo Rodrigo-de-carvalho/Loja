@@ -14,6 +14,9 @@ let isAdmin          = false
 let adminEditCustoId = null
 let ultimaVendaId    = null
 let detalheVendaId   = null
+let descontoAtual    = 0     // desconto em R$ aplicado à venda atual
+let trocaAtual       = null  // { venda_ref, devolvidos: [{item_id, nome, quantidade, preco_unitario}] }
+let trocaSelecao     = null  // seleção temporária dentro do modal de troca
 
 /* ============================================================
    UTILS
@@ -46,7 +49,8 @@ const PAGAMENTO_LABEL = {
   pix:      '📱 PIX',
   debito:   '💳 Débito',
   credito:  '💳 Crédito',
-  dinheiro: '💵 Dinheiro'
+  dinheiro: '💵 Dinheiro',
+  troca:    '🔁 Troca'
 }
 
 // Versão sem emoji para uso em PDF (fontes padrão do jsPDF não suportam emoji)
@@ -54,7 +58,8 @@ const PAGAMENTO_PDF = {
   pix:      'PIX',
   debito:   'Debito',
   credito:  'Credito',
-  dinheiro: 'Dinheiro'
+  dinheiro: 'Dinheiro',
+  troca:    'Troca'
 }
 
 const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
@@ -196,8 +201,9 @@ document.getElementById('btn-novo-produto').addEventListener('click', () => {
   produtoEditId = null
   document.getElementById('modal-produto-titulo').textContent = 'Novo Produto'
   document.getElementById('form-produto').reset()
-  document.getElementById('produto-estoque').disabled = false
-  document.getElementById('produto-estoque-hint').style.display = 'none'
+  // Estoque só aparece para o admin (o main também bloqueia sem sessão)
+  document.getElementById('produto-estoque-group').style.display = isAdmin ? 'block' : 'none'
+  document.getElementById('produto-estoque-hint').style.display  = isAdmin ? 'none' : 'block'
   codigoAtual = gerarCodigoBarras()
   renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
@@ -212,9 +218,9 @@ function abrirEditarProduto(id) {
   document.getElementById('produto-nome').value    = p.nome
   document.getElementById('produto-venda').value   = p.preco_venda
   document.getElementById('produto-estoque').value = p.estoque
-  // Estoque de produto existente só pode ser alterado pelo admin
-  document.getElementById('produto-estoque').disabled = !isAdmin
-  document.getElementById('produto-estoque-hint').style.display = isAdmin ? 'none' : 'block'
+  // Estoque só aparece para o admin (o main também bloqueia sem sessão)
+  document.getElementById('produto-estoque-group').style.display = isAdmin ? 'block' : 'none'
+  document.getElementById('produto-estoque-hint').style.display  = isAdmin ? 'none' : 'block'
   codigoAtual = p.codigo_barras
   renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
@@ -226,7 +232,7 @@ document.getElementById('form-produto').addEventListener('submit', async e => {
   e.preventDefault()
   const nome      = document.getElementById('produto-nome').value.trim()
   const preco_venda = parseFloat(document.getElementById('produto-venda').value)
-  const estoque   = parseInt(document.getElementById('produto-estoque').value) || 0
+  const estoque   = isAdmin ? (parseInt(document.getElementById('produto-estoque').value) || 0) : 0
 
   if (!nome)                        { toast('Informe o nome do produto.','error'); return }
   if (isNaN(preco_venda)||preco_venda<=0) { toast('Preço de venda inválido.','error'); return }
@@ -421,6 +427,16 @@ function adicionarAoCarrinho(prod) {
   renderCarrinho()
 }
 
+/* Totais da venda atual: subtotal dos produtos, desconto e crédito de troca */
+function calcTotais() {
+  const subtotal = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
+  const desconto = Math.min(descontoAtual, subtotal)
+  const credito  = trocaAtual
+    ? trocaAtual.devolvidos.reduce((s,d)=>s+d.quantidade*d.preco_unitario,0)
+    : 0
+  return { subtotal, desconto, credito, total: subtotal - desconto - credito }
+}
+
 function renderCarrinho() {
   const tbody   = document.getElementById('tbody-carrinho')
   const btnFin  = document.getElementById('btn-finalizar-venda')
@@ -429,44 +445,71 @@ function renderCarrinho() {
   const subEl   = document.getElementById('resumo-subtotal')
   const itensEl = document.getElementById('resumo-itens')
 
-  if (!carrinho.length) {
+  const { subtotal, desconto, credito, total } = calcTotais()
+
+  /* Linhas de devolução (troca) */
+  const linhasTroca = trocaAtual
+    ? trocaAtual.devolvidos.map((d,di)=>`
+        <tr style="background:#fff7ed;">
+          <td><strong>🔁 ${escHtml(d.nome)}</strong> <span class="text-muted" style="font-size:12px;">(devolução — venda #${trocaAtual.venda_ref})</span></td>
+          <td style="text-align:center;">${d.quantidade}</td>
+          <td>${fmtMoeda(d.preco_unitario)}</td>
+          <td><strong style="color:var(--danger);">− ${fmtMoeda(d.quantidade*d.preco_unitario)}</strong></td>
+          <td><button class="btn-xs" style="color:var(--danger);" onclick="removerDevolucao(${di})">✕</button></td>
+        </tr>`).join('')
+    : ''
+
+  if (!carrinho.length && !linhasTroca) {
     tbody.innerHTML = `<tr class="empty-row"><td colspan="5" class="empty-state" style="padding:48px 0;">
       <div class="empty-icon">🛒</div><div>Carrinho vazio</div>
       <div class="empty-hint">Escaneie ou busque um produto</div>
     </td></tr>`
     btnFin.disabled = true
-    totalEl.textContent = 'R$ 0,00'
-    countEl.textContent = '0 itens'
-    subEl.textContent   = 'R$ 0,00'
-    itensEl.textContent = '0'
-    return
+  } else {
+    let numItens = 0
+    tbody.innerHTML = carrinho.map((item,idx)=>{
+      const sub = item.quantidade * item.preco_unitario
+      numItens += item.quantidade
+      return `<tr>
+        <td><strong>${escHtml(item.nome)}</strong></td>
+        <td>
+          <div class="qty-control">
+            <button class="btn-xs" onclick="alterarQtd(${idx},-1)">−</button>
+            <span class="qty-num">${item.quantidade}</span>
+            <button class="btn-xs" onclick="alterarQtd(${idx},+1)">+</button>
+          </div>
+        </td>
+        <td>${fmtMoeda(item.preco_unitario)}</td>
+        <td><strong>${fmtMoeda(sub)}</strong></td>
+        <td><button class="btn-xs" style="color:var(--danger);" onclick="removerDoCarrinho(${idx})">✕</button></td>
+      </tr>`
+    }).join('') + linhasTroca
+    countEl.textContent = `${numItens} ${numItens!==1?'itens':'item'}`
+    itensEl.textContent = numItens
+    btnFin.disabled = false
   }
 
-  let total=0, numItens=0
-  tbody.innerHTML = carrinho.map((item,idx)=>{
-    const sub = item.quantidade * item.preco_unitario
-    total    += sub
-    numItens += item.quantidade
-    return `<tr>
-      <td><strong>${escHtml(item.nome)}</strong></td>
-      <td>
-        <div class="qty-control">
-          <button class="btn-xs" onclick="alterarQtd(${idx},-1)">−</button>
-          <span class="qty-num">${item.quantidade}</span>
-          <button class="btn-xs" onclick="alterarQtd(${idx},+1)">+</button>
-        </div>
-      </td>
-      <td>${fmtMoeda(item.preco_unitario)}</td>
-      <td><strong>${fmtMoeda(sub)}</strong></td>
-      <td><button class="btn-xs" style="color:var(--danger);" onclick="removerDoCarrinho(${idx})">✕</button></td>
-    </tr>`
-  }).join('')
+  if (!carrinho.length) { countEl.textContent = '0 itens'; itensEl.textContent = '0' }
+
+  subEl.textContent = fmtMoeda(subtotal)
+
+  const descRow = document.getElementById('resumo-desconto-row')
+  descRow.style.display = desconto > 0 ? 'flex' : 'none'
+  document.getElementById('resumo-desconto').textContent = `− ${fmtMoeda(desconto)}`
+
+  const trocaRow = document.getElementById('resumo-troca-row')
+  trocaRow.style.display = credito > 0 ? 'flex' : 'none'
+  if (trocaAtual) document.getElementById('resumo-troca-ref').textContent = trocaAtual.venda_ref
+  document.getElementById('resumo-troca-credito').textContent = `− ${fmtMoeda(credito)}`
 
   totalEl.textContent = fmtMoeda(total)
-  subEl.textContent   = fmtMoeda(total)
-  countEl.textContent = `${numItens} ${numItens!==1?'itens':'item'}`
-  itensEl.textContent = numItens
-  btnFin.disabled     = false
+}
+
+function removerDevolucao(idx) {
+  if (!trocaAtual) return
+  trocaAtual.devolvidos.splice(idx,1)
+  if (!trocaAtual.devolvidos.length) trocaAtual = null
+  renderCarrinho()
 }
 
 function alterarQtd(idx, delta) {
@@ -484,14 +527,26 @@ function alterarQtd(idx, delta) {
 function removerDoCarrinho(idx) { carrinho.splice(idx,1); renderCarrinho() }
 
 /* Finalizar → abre modal de pagamento */
-function totalCarrinho() { return carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0) }
-
 document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
-  if (!carrinho.length) return
-  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(totalCarrinho())
+  const { total } = calcTotais()
+  if (!carrinho.length && !trocaAtual) return
+
+  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(total)
   document.getElementById('pagamento-dinheiro-box').style.display = 'none'
   document.getElementById('input-valor-recebido').value = ''
   document.getElementById('troco-preview').textContent = 'R$ 0,00'
+
+  // Troca que zera ou fica a favor do cliente: não há forma de pagamento
+  const trocaZero = total <= 0
+  document.getElementById('pagamento-troca-box').style.display    = trocaZero ? 'block' : 'none'
+  document.getElementById('pagamento-escolha-label').style.display = trocaZero ? 'none' : 'block'
+  document.querySelector('#modal-pagamento .pagamento-grid').style.display = trocaZero ? 'none' : ''
+  if (trocaZero) {
+    document.getElementById('pagamento-troca-msg').textContent = total < 0
+      ? `Devolver ao cliente em dinheiro: ${fmtMoeda(-total)}`
+      : 'Troca sem diferença de valor — nada a cobrar.'
+  }
+
   openModal('modal-pagamento')
 })
 
@@ -499,24 +554,39 @@ document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
 async function concluirVenda(pagamento, valorRecebido) {
   try {
     const itens = carrinho.map(i=>({ produto_id:i.produto_id, quantidade:i.quantidade }))
-    const res = await api.finalizarVenda({ itens, pagamento, valor_recebido: valorRecebido })
+    const res = await api.finalizarVenda({
+      itens,
+      pagamento,
+      valor_recebido: valorRecebido,
+      desconto:   calcTotais().desconto,
+      venda_ref:  trocaAtual ? trocaAtual.venda_ref : null,
+      devolvidos: trocaAtual ? trocaAtual.devolvidos.map(d=>({ item_id:d.item_id, quantidade:d.quantidade })) : []
+    })
     ultimaVendaId = res.vendaId
-    document.getElementById('venda-ok-total').textContent = fmtMoeda(res.total)
-    document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
+    document.getElementById('venda-ok-total-label').textContent =
+      res.total < 0 ? 'Devolver ao cliente:' : 'Total cobrado:'
+    document.getElementById('venda-ok-total').textContent = fmtMoeda(Math.abs(res.total))
+    document.getElementById('venda-ok-pagamento').textContent =
+      res.tipo === 'troca' ? `🔁 Troca${res.total>0 ? ' — diferença em '+(PAGAMENTO_LABEL[pagamento]||pagamento) : ''}`
+                           : (PAGAMENTO_LABEL[pagamento]||pagamento)
     const trocoEl = document.getElementById('venda-ok-troco')
-    if (pagamento==='dinheiro' && res.troco!==null && res.troco!==undefined) {
+    if (pagamento==='dinheiro' && res.total>0 && res.troco!==null && res.troco!==undefined) {
       trocoEl.textContent = `Troco: ${fmtMoeda(res.troco)}`
       trocoEl.style.display = 'block'
     } else {
       trocoEl.style.display = 'none'
     }
     closeModal('modal-pagamento')
-    carrinho = []
+    carrinho      = []
+    trocaAtual    = null
+    descontoAtual = 0
     renderCarrinho()
     await carregarProdutos()
     openModal('modal-venda-ok')
   } catch(err) { toast(`Erro ao finalizar: ${errMsg(err)}`,'error') }
 }
+
+document.getElementById('btn-concluir-troca').addEventListener('click', ()=> concluirVenda('troca', null))
 
 /* Botões de pagamento */
 document.querySelectorAll('.pagamento-btn').forEach(btn=>{
@@ -537,7 +607,7 @@ document.querySelectorAll('.pagamento-btn').forEach(btn=>{
 /* Cálculo de troco em tempo real */
 document.getElementById('input-valor-recebido').addEventListener('input', e=>{
   const recebido = parseFloat(e.target.value)
-  const total    = totalCarrinho()
+  const total    = calcTotais().total
   const trocoEl  = document.getElementById('troco-preview')
   if (isNaN(recebido)) { trocoEl.textContent = 'R$ 0,00'; trocoEl.style.color = ''; return }
   const troco = recebido - total
@@ -554,7 +624,7 @@ document.getElementById('btn-confirmar-dinheiro').addEventListener('click', asyn
   if (raw !== '') {
     recebido = parseFloat(raw)
     if (isNaN(recebido)) { toast('Valor recebido inválido.','error'); return }
-    if (recebido < totalCarrinho()) { toast('Valor recebido é menor que o total da venda.','error'); return }
+    if (recebido < calcTotais().total) { toast('Valor recebido é menor que o total da venda.','error'); return }
   }
   await concluirVenda('dinheiro', recebido)
 })
@@ -568,11 +638,151 @@ document.getElementById('btn-gerar-comprovante').addEventListener('click', ()=> 
 document.getElementById('btn-comprovante-detalhe').addEventListener('click', ()=> gerarComprovante(detalheVendaId))
 
 document.getElementById('btn-cancelar-venda').addEventListener('click', ()=>{
-  if (!carrinho.length) { toast('Carrinho já está vazio.'); return }
-  confirmar('Deseja cancelar a venda? Todos os itens serão removidos.', ()=>{
-    carrinho = []; renderCarrinho(); toast('Venda cancelada.')
+  if (!carrinho.length && !trocaAtual && descontoAtual===0) { toast('Carrinho já está vazio.'); return }
+  confirmar('Deseja cancelar a venda? Todos os itens, descontos e devoluções serão removidos.', ()=>{
+    carrinho = []; trocaAtual = null; descontoAtual = 0
+    renderCarrinho(); toast('Venda cancelada.')
     document.getElementById('input-barcode').focus()
   })
+})
+
+/* ============================================================
+   TROCA DE MERCADORIA
+   ============================================================ */
+document.getElementById('btn-iniciar-troca').addEventListener('click', ()=>{
+  trocaSelecao = null
+  document.getElementById('input-troca-venda').value = trocaAtual ? trocaAtual.venda_ref : ''
+  document.getElementById('troca-venda-info').style.display = 'none'
+  document.getElementById('btn-confirmar-troca').disabled = true
+  openModal('modal-troca')
+  setTimeout(()=>document.getElementById('input-troca-venda').focus(), 80)
+})
+
+document.getElementById('input-troca-venda').addEventListener('keydown', e=>{
+  if (e.key==='Enter') document.getElementById('btn-buscar-troca').click()
+})
+
+document.getElementById('btn-buscar-troca').addEventListener('click', async ()=>{
+  const id = parseInt(document.getElementById('input-troca-venda').value)
+  if (!id) { toast('Informe o número da venda.','warn'); return }
+  try {
+    const { venda, itens } = await api.trocaInfo(id)
+    if (!itens.length) {
+      toast('Todos os itens desta venda já foram devolvidos.','warn')
+      document.getElementById('troca-venda-info').style.display = 'none'
+      document.getElementById('btn-confirmar-troca').disabled = true
+      return
+    }
+    trocaSelecao = { venda_ref: id, itens }
+    document.getElementById('troca-venda-titulo').textContent =
+      `Venda #${id} — ${fmtDH(venda.criado_em)} — ${fmtMoeda(venda.total)} (${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento})`
+    document.getElementById('tbody-troca-itens').innerHTML = itens.map(i=>`
+      <tr>
+        <td>${escHtml(i.nome_produto)}</td>
+        <td>${fmtMoeda(i.preco_unitario)}</td>
+        <td style="text-align:center;">${i.quantidade}</td>
+        <td style="text-align:center;">${i.quantidade - i.disponivel > 0 ? i.quantidade - i.disponivel : '—'}</td>
+        <td>
+          <input type="number" class="input-troca-qtd" data-item-id="${i.id}" value="0" min="0" max="${i.disponivel}"
+            style="width:70px; padding:6px 10px; border:1px solid var(--border); border-radius:7px;">
+        </td>
+      </tr>`).join('')
+    document.getElementById('troca-venda-info').style.display = 'block'
+    document.getElementById('btn-confirmar-troca').disabled = false
+    document.getElementById('troca-credito-preview').textContent = 'R$ 0,00'
+    document.querySelectorAll('.input-troca-qtd').forEach(inp =>
+      inp.addEventListener('input', atualizarCreditoTroca)
+    )
+  } catch(err) { toast(errMsg(err),'error') }
+})
+
+function coletarDevolucoes() {
+  if (!trocaSelecao) return []
+  const devolvidos = []
+  document.querySelectorAll('.input-troca-qtd').forEach(inp=>{
+    const qtd = parseInt(inp.value) || 0
+    if (qtd <= 0) return
+    const item = trocaSelecao.itens.find(i=>i.id===parseInt(inp.dataset.itemId))
+    if (!item) return
+    devolvidos.push({
+      item_id: item.id,
+      nome: item.nome_produto,
+      quantidade: Math.min(qtd, item.disponivel),
+      preco_unitario: item.preco_unitario
+    })
+  })
+  return devolvidos
+}
+
+function atualizarCreditoTroca() {
+  const credito = coletarDevolucoes().reduce((s,d)=>s+d.quantidade*d.preco_unitario,0)
+  document.getElementById('troca-credito-preview').textContent = fmtMoeda(credito)
+}
+
+document.getElementById('btn-confirmar-troca').addEventListener('click', ()=>{
+  const devolvidos = coletarDevolucoes()
+  if (!devolvidos.length) { toast('Informe a quantidade de pelo menos um item a devolver.','warn'); return }
+  trocaAtual = { venda_ref: trocaSelecao.venda_ref, devolvidos }
+  closeModal('modal-troca')
+  renderCarrinho()
+  toast(`Devolução da venda #${trocaAtual.venda_ref} aplicada. Adicione os novos produtos.`, 'success')
+  document.getElementById('input-barcode').focus()
+})
+
+/* ============================================================
+   DESCONTO
+   ============================================================ */
+document.getElementById('btn-aplicar-desconto').addEventListener('click', ()=>{
+  const { subtotal } = calcTotais()
+  if (subtotal <= 0) { toast('Adicione produtos ao carrinho antes de aplicar desconto.','warn'); return }
+  document.getElementById('desconto-subtotal').textContent = fmtMoeda(subtotal)
+  document.getElementById('desconto-tipo').value  = 'valor'
+  document.getElementById('desconto-valor').value = descontoAtual > 0 ? descontoAtual : ''
+  atualizarPreviewDesconto()
+  openModal('modal-desconto')
+  setTimeout(()=>document.getElementById('desconto-valor').focus(), 80)
+})
+
+function calcularDescontoInformado() {
+  const tipo  = document.getElementById('desconto-tipo').value
+  const valor = parseFloat(document.getElementById('desconto-valor').value)
+  const { subtotal } = calcTotais()
+  if (isNaN(valor) || valor < 0) return null
+  const desc = tipo === 'percentual' ? subtotal * (valor/100) : valor
+  return Math.round(desc * 100) / 100
+}
+
+function atualizarPreviewDesconto() {
+  const { subtotal } = calcTotais()
+  const desc = calcularDescontoInformado()
+  const el = document.getElementById('desconto-preview')
+  if (desc === null)        { el.textContent = '—'; return }
+  if (desc > subtotal)      { el.textContent = 'Desconto maior que o subtotal!'; el.style.color = 'var(--danger)'; return }
+  el.style.color = ''
+  el.textContent = fmtMoeda(subtotal - desc)
+}
+document.getElementById('desconto-valor').addEventListener('input', atualizarPreviewDesconto)
+document.getElementById('desconto-tipo').addEventListener('change', atualizarPreviewDesconto)
+document.getElementById('desconto-valor').addEventListener('keydown', e=>{
+  if (e.key==='Enter') document.getElementById('btn-salvar-desconto').click()
+})
+
+document.getElementById('btn-salvar-desconto').addEventListener('click', ()=>{
+  const desc = calcularDescontoInformado()
+  const { subtotal } = calcTotais()
+  if (desc === null || desc < 0) { toast('Valor de desconto inválido.','error'); return }
+  if (desc > subtotal) { toast('O desconto não pode ser maior que o subtotal.','error'); return }
+  descontoAtual = desc
+  closeModal('modal-desconto')
+  renderCarrinho()
+  if (desc > 0) toast(`Desconto de ${fmtMoeda(desc)} aplicado.`, 'success')
+})
+
+document.getElementById('btn-remover-desconto').addEventListener('click', ()=>{
+  descontoAtual = 0
+  closeModal('modal-desconto')
+  renderCarrinho()
+  toast('Desconto removido.')
 })
 
 /* ============================================================
@@ -618,7 +828,7 @@ async function carregarHoje() {
   tbody.innerHTML = !dados.vendas.length
     ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda hoje</td></tr>`
     : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code></td>
+        <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
         <td>${fmtHora(v.criado_em)}</td>
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
@@ -643,7 +853,7 @@ async function carregarMensal() {
   tbody.innerHTML = !dados.vendas.length
     ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
     : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code></td>
+        <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
         <td>${fmtDH(v.criado_em)}</td>
         <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
@@ -658,16 +868,23 @@ document.getElementById('btn-buscar-mensal').addEventListener('click', carregarM
 async function verDetalhesVenda(id) {
   detalheVendaId = id
   const {venda, itens} = await api.detalhesVenda(id)
+  const tipoStr = venda.tipo==='troca' ? ' — 🔁 Troca' + (venda.venda_ref?` da venda #${venda.venda_ref}`:'') : ''
   document.getElementById('detalhes-venda-titulo').textContent =
-    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}`
-  document.getElementById('tbody-detalhes-venda').innerHTML = itens.map(i=>`
-    <tr>
-      <td>${escHtml(i.nome_produto)}</td>
-      <td style="text-align:center;">${i.quantidade}</td>
+    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}${tipoStr}`
+  document.getElementById('tbody-detalhes-venda').innerHTML = itens.map(i=>{
+    const devolucao = i.quantidade < 0
+    return `<tr${devolucao?' style="background:#fff7ed;"':''}>
+      <td>${devolucao?'🔁 ':''}${escHtml(i.nome_produto)}${devolucao?' <span class="text-muted" style="font-size:12px;">(devolução)</span>':''}</td>
+      <td style="text-align:center;">${Math.abs(i.quantidade)}</td>
       <td>${fmtMoeda(i.preco_unitario)}</td>
-      <td><strong>${fmtMoeda(i.preco_unitario*i.quantidade)}</strong></td>
-    </tr>`).join('')
-  document.getElementById('detalhes-total-row').innerHTML = `Total: ${fmtMoeda(venda.total)}`
+      <td><strong${devolucao?' style="color:var(--danger);"':''}>${devolucao?'− ':''}${fmtMoeda(Math.abs(i.preco_unitario*i.quantidade))}</strong></td>
+    </tr>`
+  }).join('')
+  let resumo = ''
+  if (venda.desconto > 0) resumo += `<div style="font-size:13px; color:var(--danger);">Desconto: − ${fmtMoeda(venda.desconto)}</div>`
+  if (venda.total < 0)    resumo += `<div style="font-size:13px;">Devolvido ao cliente: ${fmtMoeda(-venda.total)}</div>`
+  document.getElementById('detalhes-total-row').innerHTML =
+    resumo + `Total: ${fmtMoeda(venda.total)}`
   openModal('modal-detalhes-venda')
 }
 
@@ -681,9 +898,12 @@ async function gerarComprovante(vendaId) {
   const W = 80   // largura da bobina 80mm
   const m = 5    // margem lateral
 
-  // Altura dinâmica: calcula com base nos itens
-  const alturaItens = itens.reduce((s, i) => s + (i.quantidade > 1 ? 11 : 6), 0)
-  const alturaTotal = 85 + alturaItens
+  // Altura dinâmica: calcula com base nos itens + linhas extras (desconto/troco/devolução)
+  const alturaItens  = itens.reduce((s, i) => s + (Math.abs(i.quantidade) > 1 ? 11 : 6), 0)
+  const linhasExtras = (venda.desconto > 0 ? 5 : 0) +
+                       (venda.valor_recebido && venda.total > 0 ? 10 : 0) +
+                       (venda.tipo === 'troca' ? 8 : 0)
+  const alturaTotal  = 85 + alturaItens + linhasExtras
 
   const doc = new jsPDF({ unit: 'mm', format: [W, alturaTotal], orientation: 'portrait' })
 
@@ -706,7 +926,7 @@ async function gerarComprovante(vendaId) {
   y += 5
 
   doc.setFontSize(7.5); doc.setFont('helvetica', 'normal')
-  doc.text('Comprovante de Venda', W / 2, y, { align: 'center' })
+  doc.text(venda.tipo === 'troca' ? 'Comprovante de Troca' : 'Comprovante de Venda', W / 2, y, { align: 'center' })
   y += 7
 
   solidLine(y); y += 5
@@ -724,7 +944,14 @@ async function gerarComprovante(vendaId) {
 
   doc.setFont('helvetica', 'normal'); doc.text('Pagamento:', m, y)
   doc.setFont('helvetica', 'bold');   doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m, y, { align: 'right' })
-  y += 7
+  y += 5
+
+  if (venda.tipo === 'troca' && venda.venda_ref) {
+    doc.setFont('helvetica', 'normal'); doc.text('Troca da venda:', m, y)
+    doc.setFont('helvetica', 'bold');   doc.text(`#${venda.venda_ref}`, W - m, y, { align: 'right' })
+    y += 5
+  }
+  y += 2
 
   solidLine(y); y += 4
 
@@ -739,21 +966,24 @@ async function gerarComprovante(vendaId) {
 
   // ── ITENS ───────────────────────────────────────────────
   itens.forEach(item => {
-    const subtotal = item.preco_unitario * item.quantidade
-    const nomeMax  = 19
-    const nome     = item.nome_produto.length > nomeMax
+    const devolucao = item.quantidade < 0
+    const qtdAbs    = Math.abs(item.quantidade)
+    const subtotal  = item.preco_unitario * item.quantidade
+    const nomeMax   = devolucao ? 14 : 19
+    let nome        = item.nome_produto.length > nomeMax
       ? item.nome_produto.slice(0, nomeMax) + '..' : item.nome_produto
+    if (devolucao) nome = `DEV. ${nome}`
 
     doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
     doc.text(nome, m, y)
-    doc.text(String(item.quantidade), W - m - 18, y, { align: 'right' })
+    doc.text(String(qtdAbs), W - m - 18, y, { align: 'right' })
     doc.setFont('helvetica', 'bold')
-    doc.text(fmtMoeda(subtotal), W - m, y, { align: 'right' })
+    doc.text(devolucao ? `-${fmtMoeda(-subtotal)}` : fmtMoeda(subtotal), W - m, y, { align: 'right' })
     y += 5
 
-    if (item.quantidade > 1) {
+    if (qtdAbs > 1) {
       doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
-      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m, y)
+      doc.text(`  ${qtdAbs}x ${fmtMoeda(item.preco_unitario)} cada`, m, y)
       doc.setTextColor(0)
       y += 6
     }
@@ -761,11 +991,33 @@ async function gerarComprovante(vendaId) {
 
   dashLine(y); y += 5
 
+  // ── DESCONTO ────────────────────────────────────────────
+  if (venda.desconto > 0) {
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
+    doc.text('Desconto:', m, y)
+    doc.setFont('helvetica', 'bold')
+    doc.text(`-${fmtMoeda(venda.desconto)}`, W - m, y, { align: 'right' })
+    y += 5
+  }
+
   // ── TOTAL ───────────────────────────────────────────────
   doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
-  doc.text('TOTAL:', m, y)
-  doc.text(fmtMoeda(venda.total), W - m, y, { align: 'right' })
-  y += 8
+  doc.text(venda.total < 0 ? 'A DEVOLVER:' : 'TOTAL:', m, y)
+  doc.text(fmtMoeda(Math.abs(venda.total)), W - m, y, { align: 'right' })
+  y += 6
+
+  // ── RECEBIDO / TROCO (dinheiro) ─────────────────────────
+  if (venda.total > 0 && venda.valor_recebido) {
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal')
+    doc.text('Recebido:', m, y)
+    doc.text(fmtMoeda(venda.valor_recebido), W - m, y, { align: 'right' })
+    y += 5
+    doc.text('Troco:', m, y)
+    doc.setFont('helvetica', 'bold')
+    doc.text(fmtMoeda(venda.troco || 0), W - m, y, { align: 'right' })
+    y += 5
+  }
+  y += 2
 
   solidLine(y); y += 7
 
