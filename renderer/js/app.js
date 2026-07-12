@@ -796,8 +796,15 @@ function initDateSelectors() {
   const mesOpts = MESES_PT.slice(1).map((m,i)=>`<option value="${i+1}"${i+1===mesA?' selected':''}>${m}</option>`).join('')
   const anoOpts = anos.map(a=>`<option value="${a}"${a===anoA?' selected':''}>${a}</option>`).join('')
 
-  ;['sel-mes-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=mesOpts })
-  ;['sel-ano-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=anoOpts })
+  ;['hist-mes'].forEach(id=>{ document.getElementById(id).innerHTML=mesOpts })
+  ;['hist-ano'].forEach(id=>{ document.getElementById(id).innerHTML=anoOpts })
+
+  const hojeYmd = ymd(now)
+  document.getElementById('hist-data').value = hojeYmd
+  document.getElementById('hist-ini').value  = hojeYmd
+  document.getElementById('hist-fim').value  = hojeYmd
+  document.getElementById('hist-trimestre').value = String(Math.ceil(mesA/3))
+  document.getElementById('hist-semestre').value  = mesA <= 6 ? '1' : '2'
 
   // Admin selectors
   ;['admin-sel-mes-lucro','admin-sel-mes-estornos'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=mesOpts })
@@ -829,30 +836,122 @@ async function carregarHoje() {
 
 document.getElementById('btn-refresh-hoje').addEventListener('click', carregarHoje)
 
-async function carregarMensal() {
-  const mes = parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano = parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados = await api.vendasMensais(mes, ano)
-  document.getElementById('stats-mensal').innerHTML = `
-    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
-    <div class="stat-card"><span class="stat-label">Vendas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
-    <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
-    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
-
-  const tbody = document.getElementById('tbody-mensal')
-  tbody.innerHTML = !dados.vendas.length
-    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
-    : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
-        <td>${fmtDH(v.criado_em)}</td>
-        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
-        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
-        <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
-      </tr>`).join('')
+/* ============================================================
+   HISTÓRICO POR PERÍODO (admin) — dia, semana, mês, trimestre,
+   semestre, ano ou intervalo personalizado
+   ============================================================ */
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+function fmtData(ymdStr) {
+  const [a,m,d] = String(ymdStr).split('-')
+  return `${d}/${m}/${a}`
 }
 
-document.getElementById('btn-buscar-mensal').addEventListener('click', carregarMensal)
+/* Mostra apenas os controles do tipo de período selecionado */
+function atualizarControlesHistorico() {
+  const tipo = document.getElementById('hist-tipo').value
+  const mostrar = {
+    'hist-data':      tipo==='dia' || tipo==='semana',
+    'hist-mes':       tipo==='mes',
+    'hist-trimestre': tipo==='trimestre',
+    'hist-semestre':  tipo==='semestre',
+    'hist-ano':       tipo==='mes' || tipo==='trimestre' || tipo==='semestre' || tipo==='ano',
+    'hist-ini':       tipo==='personalizado',
+    'hist-ate':       tipo==='personalizado',
+    'hist-fim':       tipo==='personalizado'
+  }
+  for (const [id, on] of Object.entries(mostrar)) {
+    document.getElementById(id).style.display = on ? '' : 'none'
+  }
+}
+document.getElementById('hist-tipo').addEventListener('change', atualizarControlesHistorico)
+
+/* Calcula {ini, fim, label} do período escolhido (datas locais, inclusivas) */
+function rangeHistorico() {
+  const tipo = document.getElementById('hist-tipo').value
+  const ano  = parseInt(document.getElementById('hist-ano').value)
+
+  if (tipo === 'dia') {
+    const v = document.getElementById('hist-data').value
+    if (!v) return null
+    return { ini: v, fim: v, label: `Dia ${fmtData(v)}` }
+  }
+  if (tipo === 'semana') {
+    const v = document.getElementById('hist-data').value
+    if (!v) return null
+    const d = new Date(v + 'T00:00:00')
+    const diasDesdeSegunda = (d.getDay() + 6) % 7
+    const seg = new Date(d); seg.setDate(d.getDate() - diasDesdeSegunda)
+    const dom = new Date(seg); dom.setDate(seg.getDate() + 6)
+    return { ini: ymd(seg), fim: ymd(dom), label: `Semana de ${fmtData(ymd(seg))} a ${fmtData(ymd(dom))}` }
+  }
+  if (tipo === 'mes') {
+    const mes = parseInt(document.getElementById('hist-mes').value)
+    return {
+      ini: ymd(new Date(ano, mes-1, 1)),
+      fim: ymd(new Date(ano, mes, 0)),
+      label: `${MESES_PT[mes]} de ${ano}`
+    }
+  }
+  if (tipo === 'trimestre') {
+    const t = parseInt(document.getElementById('hist-trimestre').value)
+    const mIni = (t-1)*3
+    return {
+      ini: ymd(new Date(ano, mIni, 1)),
+      fim: ymd(new Date(ano, mIni+3, 0)),
+      label: `${t}º trimestre de ${ano}`
+    }
+  }
+  if (tipo === 'semestre') {
+    const s = parseInt(document.getElementById('hist-semestre').value)
+    const mIni = (s-1)*6
+    return {
+      ini: ymd(new Date(ano, mIni, 1)),
+      fim: ymd(new Date(ano, mIni+6, 0)),
+      label: `${s}º semestre de ${ano}`
+    }
+  }
+  if (tipo === 'ano') {
+    return { ini: `${ano}-01-01`, fim: `${ano}-12-31`, label: `Ano de ${ano}` }
+  }
+  // personalizado
+  const ini = document.getElementById('hist-ini').value
+  const fim = document.getElementById('hist-fim').value
+  if (!ini || !fim) return null
+  if (ini > fim) { toast('A data inicial é maior que a data final.','error'); return null }
+  return { ini, fim, label: `De ${fmtData(ini)} a ${fmtData(fim)}` }
+}
+
+async function carregarHistorico() {
+  atualizarControlesHistorico()
+  const r = rangeHistorico()
+  if (!r) { toast('Informe o período.','warn'); return }
+  try {
+    const dados = await api.vendasPeriodo(r.ini, r.fim)
+    document.getElementById('hist-periodo-label').textContent =
+      `${r.label} — ${r.ini === r.fim ? '1 dia' : `${fmtData(r.ini)} até ${fmtData(r.fim)}`}`
+    document.getElementById('stats-historico').innerHTML = `
+      <div class="stat-card"><span class="stat-label">Período</span><span class="stat-value" style="font-size:16px;">${r.label}</span></div>
+      <div class="stat-card"><span class="stat-label">Vendas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
+      <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
+      <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
+
+    const tbody = document.getElementById('tbody-historico')
+    tbody.innerHTML = !dados.vendas.length
+      ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
+      : dados.vendas.map(v=>`<tr>
+          <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
+          <td>${fmtDH(v.criado_em)}</td>
+          <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+          <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
+          <td><strong>${fmtMoeda(v.total)}</strong></td>
+          <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+        </tr>`).join('')
+  } catch(err) { toast(errMsg(err),'error') }
+}
+
+document.getElementById('btn-buscar-historico').addEventListener('click', carregarHistorico)
 
 /* Detalhes venda */
 async function verDetalhesVenda(id) {
@@ -1329,46 +1428,48 @@ document.getElementById('btn-export-hoje').addEventListener('click', async () =>
 })
 
 /* ============================================================
-   PDF — EXPORTAR: HISTÓRICO MENSAL
+   PDF — EXPORTAR: HISTÓRICO POR PERÍODO (admin)
    ============================================================ */
-document.getElementById('btn-export-mensal').addEventListener('click', async () => {
-  const mes   = parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano   = parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados = await api.vendasMensais(mes, ano)
-  const doc   = _novoPDF()
+document.getElementById('btn-export-historico').addEventListener('click', async () => {
+  const r = rangeHistorico()
+  if (!r) { toast('Informe o período.','warn'); return }
+  try {
+    const dados = await api.vendasPeriodo(r.ini, r.fim)
+    const doc   = _novoPDF()
 
-  let y = _pdfHeader(doc, 'Histórico Mensal de Vendas', `Período: ${MESES_PT[mes]} de ${ano}`)
+    let y = _pdfHeader(doc, 'Histórico de Vendas', `Período: ${r.label} (${fmtData(r.ini)} a ${fmtData(r.fim)})`)
 
-  const ticket = dados.totais.num_vendas > 0
-    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
+    const ticket = dados.totais.num_vendas > 0
+      ? dados.totais.total_vendas / dados.totais.num_vendas : 0
 
-  y = _pdfCards(doc, y, [
-    { label: 'Vendas no mês',    value: String(dados.totais.num_vendas),      color: 'purple' },
-    { label: 'Total arrecadado', value: fmtMoeda(dados.totais.total_vendas),  color: 'green'  },
-    { label: 'Ticket médio',     value: fmtMoeda(ticket),                     color: 'gray'   },
-  ])
+    y = _pdfCards(doc, y, [
+      { label: 'Vendas no período', value: String(dados.totais.num_vendas),     color: 'purple' },
+      { label: 'Total arrecadado',  value: fmtMoeda(dados.totais.total_vendas), color: 'green'  },
+      { label: 'Ticket médio',      value: fmtMoeda(ticket),                    color: 'gray'   },
+    ])
 
-  if (dados.vendas.length > 0) {
-    y = _pdfTable(doc, y, {
-      headers:   ['Nº', 'Data / Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
-      colWidths: [18,   42,            60,                   20,      42],
-      aligns:    ['left','left',        'left',               'center','right'],
-      rows: dados.vendas.map(v => [
-        `#${v.id}`,
-        fmtDH(v.criado_em),
-        PAGAMENTO_PDF[v.pagamento] || v.pagamento,
-        String(v.num_itens),
-        fmtMoeda(v.total)
-      ])
-    })
-    _pdfTotalRow(doc, y - 5, `TOTAL DE ${MESES_PT[mes].toUpperCase()}/${ano}`, fmtMoeda(dados.totais.total_vendas))
-  } else {
-    _pdfSemDados(doc, y, `Nenhuma venda em ${MESES_PT[mes]}/${ano}.`)
-  }
+    if (dados.vendas.length > 0) {
+      y = _pdfTable(doc, y, {
+        headers:   ['Nº', 'Data / Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
+        colWidths: [18,   42,            60,                   20,      42],
+        aligns:    ['left','left',        'left',               'center','right'],
+        rows: dados.vendas.map(v => [
+          `#${v.id}${v.tipo==='troca'?' (troca)':''}`,
+          fmtDH(v.criado_em),
+          PAGAMENTO_PDF[v.pagamento] || v.pagamento,
+          String(v.num_itens),
+          fmtMoeda(v.total)
+        ])
+      })
+      _pdfTotalRow(doc, y - 5, `TOTAL DO PERÍODO`, fmtMoeda(dados.totais.total_vendas))
+    } else {
+      _pdfSemDados(doc, y, `Nenhuma venda no período selecionado.`)
+    }
 
-  _pdfFooter(doc)
-  doc.save(`vendas-${MESES_PT[mes].toLowerCase()}-${ano}.pdf`)
-  toast('PDF exportado com sucesso!', 'success')
+    _pdfFooter(doc)
+    doc.save(`vendas-${r.ini}-a-${r.fim}.pdf`)
+    toast('PDF exportado com sucesso!', 'success')
+  } catch(err) { toast(errMsg(err),'error') }
 })
 
 /* ============================================================
@@ -1427,7 +1528,7 @@ document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
     document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
     if(btn.dataset.adminTab==='custos')    carregarAdminCustos()
     if(btn.dataset.adminTab==='estoque')   carregarAdminEstoque()
-    if(btn.dataset.adminTab==='historico') carregarMensal()
+    if(btn.dataset.adminTab==='historico') carregarHistorico()
     if(btn.dataset.adminTab==='lucro')     carregarAdminLucro()
     if(btn.dataset.adminTab==='estornos')  carregarAdminEstornos()
   })

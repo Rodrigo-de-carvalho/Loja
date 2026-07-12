@@ -94,6 +94,7 @@ function registrarHandlers() {
   ipcMain.handle('vendas:detalhes',   (_, id)   => db.detalhesVenda(id))
 
   /* Vendas — somente admin (histórico de dias anteriores incluso) */
+  ipcMain.handle('vendas:periodo',    exigirAdmin((_, i, f) => db.vendasPeriodo(i, f)))
   ipcMain.handle('vendas:mensais',    exigirAdmin((_, m, a) => db.vendasMensais(m, a)))
   ipcMain.handle('vendas:cancelar',   exigirAdmin((_, id)   => db.cancelarVenda(id)))
   ipcMain.handle('vendas:lucro',      exigirAdmin((_, m, a) => db.lucroMensal(m, a)))

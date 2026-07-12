@@ -301,28 +301,52 @@
         <div class="tabs-bar">
           <button class="tab-btn active" data-admin-tab="custos">💰 Preços de Custo</button>
           <button class="tab-btn" data-admin-tab="estoque">📦 Estoque</button>
-          <button class="tab-btn" data-admin-tab="historico">📆 Histórico Mensal</button>
+          <button class="tab-btn" data-admin-tab="historico">📆 Histórico</button>
           <button class="tab-btn" data-admin-tab="lucro">📊 Lucro Mensal</button>
           <button class="tab-btn" data-admin-tab="estornos">↩ Estornos</button>
         </div>
 
-        <!-- Histórico Mensal (somente admin) -->
+        <!-- Histórico por período (somente admin) -->
         <div id="admin-tab-historico" class="tab-pane">
           <div class="relatorio-toolbar">
-            <div class="date-picker-group">
-              <select id="sel-mes-mensal"></select>
-              <select id="sel-ano-mensal"></select>
-              <button class="btn btn-secondary" id="btn-buscar-mensal">Buscar</button>
+            <div class="date-picker-group" style="flex-wrap:wrap; gap:8px;">
+              <select id="hist-tipo">
+                <option value="dia">📅 Dia</option>
+                <option value="semana">🗓️ Semana</option>
+                <option value="mes" selected>📆 Mês</option>
+                <option value="trimestre">📊 Trimestre</option>
+                <option value="semestre">📈 Semestre</option>
+                <option value="ano">🗂️ Ano</option>
+                <option value="personalizado">✏️ Período personalizado</option>
+              </select>
+              <input type="date" id="hist-data" style="display:none; padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
+              <select id="hist-mes"></select>
+              <select id="hist-trimestre" style="display:none;">
+                <option value="1">1º trimestre (jan–mar)</option>
+                <option value="2">2º trimestre (abr–jun)</option>
+                <option value="3">3º trimestre (jul–set)</option>
+                <option value="4">4º trimestre (out–dez)</option>
+              </select>
+              <select id="hist-semestre" style="display:none;">
+                <option value="1">1º semestre (jan–jun)</option>
+                <option value="2">2º semestre (jul–dez)</option>
+              </select>
+              <select id="hist-ano"></select>
+              <input type="date" id="hist-ini" style="display:none; padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
+              <span id="hist-ate" style="display:none;">até</span>
+              <input type="date" id="hist-fim" style="display:none; padding:8px 10px; border:1px solid var(--border); border-radius:8px;">
+              <button class="btn btn-secondary" id="btn-buscar-historico">Buscar</button>
             </div>
-            <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
+            <button class="btn btn-export" id="btn-export-historico">📄 Exportar PDF</button>
           </div>
-          <div class="stats-grid" id="stats-mensal"></div>
+          <p class="page-sub" id="hist-periodo-label" style="margin-bottom:12px;"></p>
+          <div class="stats-grid" id="stats-historico"></div>
           <div class="card table-card">
             <table class="table">
               <thead>
                 <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th></th></tr>
               </thead>
-              <tbody id="tbody-mensal"></tbody>
+              <tbody id="tbody-historico"></tbody>
             </table>
           </div>
         </div>

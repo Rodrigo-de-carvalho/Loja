@@ -336,6 +336,35 @@ class Database {
     return { vendas, totais }
   }
 
+  /*
+   * Consulta genérica por período (datas inclusivas, formato YYYY-MM-DD).
+   * Usada pelo histórico do admin: dia, semana, mês, trimestre, semestre,
+   * ano ou intervalo personalizado.
+   */
+  vendasPeriodo(dataIni, dataFim) {
+    const reData = /^\d{4}-\d{2}-\d{2}$/
+    if (!reData.test(String(dataIni)) || !reData.test(String(dataFim))) {
+      throw new Error('Período inválido.')
+    }
+    if (dataIni > dataFim) throw new Error('A data inicial é maior que a data final.')
+
+    const vendas = this.db.prepare(`
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
+        (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
+      FROM vendas v
+      WHERE date(v.criado_em) BETWEEN ? AND ? AND v.status = 'concluida'
+      ORDER BY v.criado_em DESC
+    `).all(dataIni, dataFim)
+
+    const totais = this.db.prepare(`
+      SELECT COALESCE(SUM(total),0) AS total_vendas, COUNT(id) AS num_vendas
+      FROM vendas
+      WHERE date(criado_em) BETWEEN ? AND ? AND status = 'concluida'
+    `).get(dataIni, dataFim)
+
+    return { vendas, totais }
+  }
+
   vendasMensais(mes, ano) {
     const m = String(mes).padStart(2, '0')
     const a = String(ano)
