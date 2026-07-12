@@ -237,16 +237,11 @@
       <div class="page-header">
         <div>
           <h1 class="page-title">Relatórios</h1>
-          <p class="page-sub">Acompanhe as vendas da loja</p>
+          <p class="page-sub">Vendas do dia atual — o histórico completo fica no painel do administrador</p>
         </div>
       </div>
 
-      <div class="tabs-bar">
-        <button class="tab-btn active" data-tab="hoje">📅 Vendas de Hoje</button>
-        <button class="tab-btn" data-tab="mensal">📆 Histórico Mensal</button>
-      </div>
-
-      <!-- Hoje -->
+      <!-- Hoje (único relatório do operador) -->
       <div id="tab-hoje" class="tab-pane active">
         <div class="relatorio-toolbar">
           <h2 id="titulo-hoje">Vendas de Hoje</h2>
@@ -266,26 +261,6 @@
         </div>
       </div>
 
-      <!-- Mensal -->
-      <div id="tab-mensal" class="tab-pane">
-        <div class="relatorio-toolbar">
-          <div class="date-picker-group">
-            <select id="sel-mes-mensal"></select>
-            <select id="sel-ano-mensal"></select>
-            <button class="btn btn-secondary" id="btn-buscar-mensal">Buscar</button>
-          </div>
-          <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
-        </div>
-        <div class="stats-grid" id="stats-mensal"></div>
-        <div class="card table-card">
-          <table class="table">
-            <thead>
-              <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th></th></tr>
-            </thead>
-            <tbody id="tbody-mensal"></tbody>
-          </table>
-        </div>
-      </div>
     </section>
 
     <!-- ==============================
@@ -326,8 +301,30 @@
         <div class="tabs-bar">
           <button class="tab-btn active" data-admin-tab="custos">💰 Preços de Custo</button>
           <button class="tab-btn" data-admin-tab="estoque">📦 Estoque</button>
+          <button class="tab-btn" data-admin-tab="historico">📆 Histórico Mensal</button>
           <button class="tab-btn" data-admin-tab="lucro">📊 Lucro Mensal</button>
           <button class="tab-btn" data-admin-tab="estornos">↩ Estornos</button>
+        </div>
+
+        <!-- Histórico Mensal (somente admin) -->
+        <div id="admin-tab-historico" class="tab-pane">
+          <div class="relatorio-toolbar">
+            <div class="date-picker-group">
+              <select id="sel-mes-mensal"></select>
+              <select id="sel-ano-mensal"></select>
+              <button class="btn btn-secondary" id="btn-buscar-mensal">Buscar</button>
+            </div>
+            <button class="btn btn-export" id="btn-export-mensal">📄 Exportar PDF</button>
+          </div>
+          <div class="stats-grid" id="stats-mensal"></div>
+          <div class="card table-card">
+            <table class="table">
+              <thead>
+                <tr><th>Nº</th><th>Data/Hora</th><th>Pagamento</th><th>Itens</th><th>Total</th><th></th></tr>
+              </thead>
+              <tbody id="tbody-mensal"></tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Custos -->

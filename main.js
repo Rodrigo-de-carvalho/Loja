@@ -91,10 +91,10 @@ function registrarHandlers() {
   ipcMain.handle('vendas:finalizar',  (_, d)    => db.finalizarVenda(d))
   ipcMain.handle('vendas:trocaInfo',  (_, id)   => db.trocaInfo(id))
   ipcMain.handle('vendas:hoje',       ()        => db.vendasHoje())
-  ipcMain.handle('vendas:mensais',    (_, m, a) => db.vendasMensais(m, a))
   ipcMain.handle('vendas:detalhes',   (_, id)   => db.detalhesVenda(id))
 
-  /* Vendas — somente admin */
+  /* Vendas — somente admin (histórico de dias anteriores incluso) */
+  ipcMain.handle('vendas:mensais',    exigirAdmin((_, m, a) => db.vendasMensais(m, a)))
   ipcMain.handle('vendas:cancelar',   exigirAdmin((_, id)   => db.cancelarVenda(id)))
   ipcMain.handle('vendas:lucro',      exigirAdmin((_, m, a) => db.lucroMensal(m, a)))
   ipcMain.handle('vendas:estornadas', exigirAdmin((_, m, a) => db.estornadasMensais(m, a)))

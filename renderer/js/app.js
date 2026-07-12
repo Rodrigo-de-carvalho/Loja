@@ -786,18 +786,8 @@ document.getElementById('btn-remover-desconto').addEventListener('click', ()=>{
 })
 
 /* ============================================================
-   RELATÓRIOS (operador — sem lucro)
+   RELATÓRIOS (operador — apenas o dia atual; histórico é admin)
    ============================================================ */
-document.querySelectorAll('.tab-btn[data-tab]').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.classList.remove('active'))
-    document.querySelectorAll('.tab-pane[id^="tab-"]').forEach(p=>p.classList.remove('active'))
-    btn.classList.add('active')
-    document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active')
-    if(btn.dataset.tab==='hoje')   carregarHoje()
-    if(btn.dataset.tab==='mensal') carregarMensal()
-  })
-})
 
 function initDateSelectors() {
   const now = new Date()
@@ -1435,10 +1425,11 @@ document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
     document.querySelectorAll('#admin-painel .tab-pane').forEach(p=>p.classList.remove('active'))
     btn.classList.add('active')
     document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
-    if(btn.dataset.adminTab==='custos')   carregarAdminCustos()
-    if(btn.dataset.adminTab==='estoque')  carregarAdminEstoque()
-    if(btn.dataset.adminTab==='lucro')    carregarAdminLucro()
-    if(btn.dataset.adminTab==='estornos') carregarAdminEstornos()
+    if(btn.dataset.adminTab==='custos')    carregarAdminCustos()
+    if(btn.dataset.adminTab==='estoque')   carregarAdminEstoque()
+    if(btn.dataset.adminTab==='historico') carregarMensal()
+    if(btn.dataset.adminTab==='lucro')     carregarAdminLucro()
+    if(btn.dataset.adminTab==='estornos')  carregarAdminEstornos()
   })
 })
 
