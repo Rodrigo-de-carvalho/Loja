@@ -24,6 +24,8 @@ function fmtHora(s)   { if(!s)return'—'; const d=new Date(s.replace(' ','T'));
 function fmtDH(s)     { if(!s)return'—'; const d=new Date(s.replace(' ','T')); return isNaN(d)?s:`${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` }
 function margem(c,v)  { if(!c||c===0)return'—'; return (((v-c)/c)*100).toFixed(1)+'%' }
 function escHtml(s)   { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
+// Erros de IPC chegam prefixados com "Error invoking remote method '...'" — remove para exibir só a mensagem útil
+function errMsg(err)  { return String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': *(Error: *)?/, '') }
 
 function gerarCodigoBarras() {
   return `${Date.now().toString().slice(-9)}${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`
@@ -194,6 +196,8 @@ document.getElementById('btn-novo-produto').addEventListener('click', () => {
   produtoEditId = null
   document.getElementById('modal-produto-titulo').textContent = 'Novo Produto'
   document.getElementById('form-produto').reset()
+  document.getElementById('produto-estoque').disabled = false
+  document.getElementById('produto-estoque-hint').style.display = 'none'
   codigoAtual = gerarCodigoBarras()
   renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
@@ -208,6 +212,9 @@ function abrirEditarProduto(id) {
   document.getElementById('produto-nome').value    = p.nome
   document.getElementById('produto-venda').value   = p.preco_venda
   document.getElementById('produto-estoque').value = p.estoque
+  // Estoque de produto existente só pode ser alterado pelo admin
+  document.getElementById('produto-estoque').disabled = !isAdmin
+  document.getElementById('produto-estoque-hint').style.display = isAdmin ? 'none' : 'block'
   codigoAtual = p.codigo_barras
   renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
   document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
@@ -227,8 +234,8 @@ document.getElementById('form-produto').addEventListener('submit', async e => {
   try {
     if (produtoEditId) {
       await api.atualizarProduto(produtoEditId, { nome, preco_venda })
-      // Atualiza estoque via admin handler para manter a regra
-      await api.adminAtualizarEstoque(produtoEditId, estoque)
+      // Estoque só é alterado se houver sessão de admin (o main também valida)
+      if (isAdmin) await api.adminAtualizarEstoque(produtoEditId, estoque)
       toast('Produto atualizado!', 'success')
     } else {
       await api.criarProduto({ nome, preco_venda, codigo_barras: codigoAtual, estoque })
@@ -237,7 +244,7 @@ document.getElementById('form-produto').addEventListener('submit', async e => {
     closeModal('modal-produto')
     await carregarProdutos()
     preencherSelectEtiquetas()
-  } catch(err) { toast(`Erro: ${err.message}`, 'error') }
+  } catch(err) { toast(`Erro: ${errMsg(err)}`, 'error') }
 })
 
 async function deletarProduto(id, nome) {
@@ -246,7 +253,7 @@ async function deletarProduto(id, nome) {
       await api.deletarProduto(id)
       toast('Produto excluído.', 'success')
       await carregarProdutos()
-    } catch(err) { toast(`Erro: ${err.message}`, 'error') }
+    } catch(err) { toast(`Erro: ${errMsg(err)}`, 'error') }
   })
 }
 
@@ -361,7 +368,7 @@ async function adicionarItem() {
     adicionarAoCarrinho(prod)
     input.value = ''
     input.focus()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(`Erro: ${errMsg(err)}`,'error') }
 }
 
 /* Busca por nome */
@@ -401,7 +408,12 @@ function adicionarDoModal(id) {
 }
 
 function adicionarAoCarrinho(prod) {
-  const existe = carrinho.find(i=>i.produto_id===prod.id)
+  const existe   = carrinho.find(i=>i.produto_id===prod.id)
+  const noCarrinho = existe ? existe.quantidade : 0
+  if (prod.estoque <= noCarrinho) {
+    toast(`Estoque insuficiente para "${prod.nome}" (disponível: ${prod.estoque}).`,'error')
+    return
+  }
   existe
     ? existe.quantidade++
     : carrinho.push({produto_id:prod.id, nome:prod.nome, quantidade:1,
@@ -458,6 +470,13 @@ function renderCarrinho() {
 }
 
 function alterarQtd(idx, delta) {
+  if (delta > 0) {
+    const prod = todosProdutos.find(p=>p.id===carrinho[idx].produto_id)
+    if (prod && prod.estoque <= carrinho[idx].quantidade) {
+      toast(`Estoque insuficiente para "${prod.nome}" (disponível: ${prod.estoque}).`,'error')
+      return
+    }
+  }
   carrinho[idx].quantidade += delta
   if (carrinho[idx].quantidade<=0) carrinho.splice(idx,1)
   renderCarrinho()
@@ -465,29 +484,79 @@ function alterarQtd(idx, delta) {
 function removerDoCarrinho(idx) { carrinho.splice(idx,1); renderCarrinho() }
 
 /* Finalizar → abre modal de pagamento */
+function totalCarrinho() { return carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0) }
+
 document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
   if (!carrinho.length) return
-  const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
-  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(total)
+  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(totalCarrinho())
+  document.getElementById('pagamento-dinheiro-box').style.display = 'none'
+  document.getElementById('input-valor-recebido').value = ''
+  document.getElementById('troco-preview').textContent = 'R$ 0,00'
   openModal('modal-pagamento')
 })
+
+/* Conclui a venda: o backend recalcula preços/total e valida o estoque */
+async function concluirVenda(pagamento, valorRecebido) {
+  try {
+    const itens = carrinho.map(i=>({ produto_id:i.produto_id, quantidade:i.quantidade }))
+    const res = await api.finalizarVenda({ itens, pagamento, valor_recebido: valorRecebido })
+    ultimaVendaId = res.vendaId
+    document.getElementById('venda-ok-total').textContent = fmtMoeda(res.total)
+    document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
+    const trocoEl = document.getElementById('venda-ok-troco')
+    if (pagamento==='dinheiro' && res.troco!==null && res.troco!==undefined) {
+      trocoEl.textContent = `Troco: ${fmtMoeda(res.troco)}`
+      trocoEl.style.display = 'block'
+    } else {
+      trocoEl.style.display = 'none'
+    }
+    closeModal('modal-pagamento')
+    carrinho = []
+    renderCarrinho()
+    await carregarProdutos()
+    openModal('modal-venda-ok')
+  } catch(err) { toast(`Erro ao finalizar: ${errMsg(err)}`,'error') }
+}
 
 /* Botões de pagamento */
 document.querySelectorAll('.pagamento-btn').forEach(btn=>{
   btn.addEventListener('click', async ()=>{
     const pagamento = btn.dataset.pag
-    const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
-    try {
-      ultimaVendaId = await api.finalizarVenda({itens:carrinho, total, pagamento})
-      document.getElementById('venda-ok-total').textContent = fmtMoeda(total)
-      document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
-      closeModal('modal-pagamento')
-      carrinho = []
-      renderCarrinho()
-      await carregarProdutos()
-      openModal('modal-venda-ok')
-    } catch(err) { toast(`Erro ao finalizar: ${err.message}`,'error') }
+    if (pagamento === 'dinheiro') {
+      // mostra o painel de troco em vez de finalizar direto
+      document.getElementById('pagamento-dinheiro-box').style.display = 'block'
+      document.getElementById('input-valor-recebido').value = ''
+      document.getElementById('troco-preview').textContent = 'R$ 0,00'
+      setTimeout(()=>document.getElementById('input-valor-recebido').focus(), 80)
+      return
+    }
+    await concluirVenda(pagamento, null)
   })
+})
+
+/* Cálculo de troco em tempo real */
+document.getElementById('input-valor-recebido').addEventListener('input', e=>{
+  const recebido = parseFloat(e.target.value)
+  const total    = totalCarrinho()
+  const trocoEl  = document.getElementById('troco-preview')
+  if (isNaN(recebido)) { trocoEl.textContent = 'R$ 0,00'; trocoEl.style.color = ''; return }
+  const troco = recebido - total
+  trocoEl.textContent = fmtMoeda(troco)
+  trocoEl.style.color = troco < 0 ? 'var(--danger)' : ''
+})
+document.getElementById('input-valor-recebido').addEventListener('keydown', e=>{
+  if (e.key==='Enter') document.getElementById('btn-confirmar-dinheiro').click()
+})
+
+document.getElementById('btn-confirmar-dinheiro').addEventListener('click', async ()=>{
+  const raw = document.getElementById('input-valor-recebido').value.trim()
+  let recebido = null
+  if (raw !== '') {
+    recebido = parseFloat(raw)
+    if (isNaN(recebido)) { toast('Valor recebido inválido.','error'); return }
+    if (recebido < totalCarrinho()) { toast('Valor recebido é menor que o total da venda.','error'); return }
+  }
+  await concluirVenda('dinheiro', recebido)
 })
 
 document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
@@ -1079,17 +1148,17 @@ document.getElementById('btn-admin-login').addEventListener('click', async ()=>{
   try {
     const eH = await hashStr(email)
     const sH = await hashStr(senha)
-    const ok = await api.verificarAdmin(eH, sH)
-    if (ok) {
+    const res = await api.adminLogin(eH, sH)
+    if (res.ok) {
       isAdmin = true
       document.getElementById('admin-email').value = ''
       document.getElementById('admin-senha').value = ''
       renderAdminState()
     } else {
       errEl.style.display = 'block'
-      errEl.textContent   = 'E-mail ou senha incorretos.'
+      errEl.textContent   = res.error || 'E-mail ou senha incorretos.'
     }
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(`Erro: ${errMsg(err)}`,'error') }
 })
 
 document.getElementById('admin-senha').addEventListener('keydown', e=>{
@@ -1098,7 +1167,8 @@ document.getElementById('admin-senha').addEventListener('keydown', e=>{
 
 /* Logout */
 document.getElementById('btn-admin-logout').addEventListener('click', ()=>{
-  confirmar('Deseja sair do painel de administrador?', ()=>{
+  confirmar('Deseja sair do painel de administrador?', async ()=>{
+    try { await api.adminLogout() } catch(_) {}
     isAdmin = false
     renderAdminState()
     navigateTo('produtos')
@@ -1115,6 +1185,7 @@ document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
     document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
     if(btn.dataset.adminTab==='custos')   carregarAdminCustos()
     if(btn.dataset.adminTab==='estoque')  carregarAdminEstoque()
+    if(btn.dataset.adminTab==='lucro')    carregarAdminLucro()
     if(btn.dataset.adminTab==='estornos') carregarAdminEstornos()
   })
 })
@@ -1135,6 +1206,21 @@ async function carregarAdminEstornos() {
         <td><strong>${fmtMoeda(v.total)}</strong></td>
         <td><button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button></td>
       </tr>`).join('')
+
+  try {
+    const estornadas = await api.estornadasMensais(mes, ano)
+    const tbodyHist = document.getElementById('tbody-admin-estornos-hist')
+    tbodyHist.innerHTML = !estornadas.length
+      ? `<tr><td colspan="6" class="empty-state" style="padding:24px 0;">Nenhum estorno neste período</td></tr>`
+      : estornadas.map(v=>`<tr>
+          <td><code>#${v.id}</code></td>
+          <td>${fmtDH(v.criado_em)}</td>
+          <td>${fmtDH(v.estornada_em)}</td>
+          <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+          <td><strong>${fmtMoeda(v.total)}</strong></td>
+          <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
+        </tr>`).join('')
+  } catch(err) { console.warn('Histórico de estornos:', errMsg(err)) }
 }
 
 document.getElementById('admin-btn-buscar-estornos').addEventListener('click', carregarAdminEstornos)
@@ -1181,7 +1267,7 @@ document.getElementById('btn-salvar-custo').addEventListener('click', async ()=>
     toast('Preço de custo salvo!','success')
     await carregarAdminCustos()
     await carregarProdutos()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(`Erro: ${errMsg(err)}`,'error') }
 })
 
 document.getElementById('editar-custo-valor').addEventListener('keydown', e=>{
@@ -1226,7 +1312,7 @@ async function salvarEstoque(id) {
     toast('Estoque atualizado!','success')
     await carregarProdutos()
     await carregarAdminEstoque()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(`Erro: ${errMsg(err)}`,'error') }
 }
 
 /* --- Aba: Lucro (admin) --- */
@@ -1237,7 +1323,15 @@ async function carregarAdminLucro() {
   const {receita,custo,lucro} = d
   const pct = receita>0 ? ((lucro/receita)*100).toFixed(1) : '0'
 
-  document.getElementById('admin-stats-lucro').innerHTML = `
+  const avisoSemCusto = d.itens_sem_custo > 0
+    ? `<div class="card" style="grid-column:1/-1; padding:12px 16px; border-left:4px solid var(--warn, #f59e0b); font-size:13px;">
+        ⚠️ <strong>${d.itens_sem_custo}</strong> ite${d.itens_sem_custo===1?'m':'ns'} vendido${d.itens_sem_custo===1?'':'s'}
+        (${fmtMoeda(d.receita_sem_custo)} de receita) não entra${d.itens_sem_custo===1?'':'m'} no cálculo de custo/lucro
+        por não ter preço de custo cadastrado. Defina os custos na aba "Preços de Custo" para um lucro real.
+      </div>`
+    : ''
+
+  document.getElementById('admin-stats-lucro').innerHTML = avisoSemCusto + `
     <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
     <div class="stat-card"><span class="stat-label">Receita total</span><span class="stat-value green">${fmtMoeda(receita)}</span></div>
     <div class="stat-card"><span class="stat-label">Custo total</span><span class="stat-value red">${fmtMoeda(custo)}</span></div>
@@ -1266,7 +1360,8 @@ document.getElementById('admin-btn-buscar-lucro').addEventListener('click', carr
 document.getElementById('admin-btn-export-lucro').addEventListener('click', async () => {
   const mes = parseInt(document.getElementById('admin-sel-mes-lucro').value)
   const ano = parseInt(document.getElementById('admin-sel-ano-lucro').value)
-  const { receita, custo, lucro } = await api.lucroMensal(mes, ano)
+  const dadosLucro = await api.lucroMensal(mes, ano)
+  const { receita, custo, lucro } = dadosLucro
   const pct   = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
   const doc   = _novoPDF()
 
@@ -1278,6 +1373,22 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
     { label: 'Lucro líquido',  value: fmtMoeda(lucro),   color: lucro >= 0 ? 'purple' : 'red' },
     { label: 'Margem de lucro',value: `${pct}%`,          color: parseFloat(pct) >= 0 ? 'orange' : 'red' },
   ])
+
+  // Aviso: itens sem custo cadastrado ficam fora do cálculo de lucro
+  if (dadosLucro.itens_sem_custo > 0) {
+    doc.setFillColor(254, 243, 199)
+    doc.setDrawColor(252, 211, 77)
+    doc.setLineWidth(0.4)
+    doc.roundedRect(14, y, 182, 12, 2, 2, 'FD')
+    doc.setTextColor(120, 53, 15)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    doc.text(
+      `Atencao: ${dadosLucro.itens_sem_custo} item(ns) vendido(s) (${fmtMoeda(dadosLucro.receita_sem_custo)} de receita) sem preco de custo cadastrado — fora do calculo de custo/lucro.`,
+      18, y + 7.5
+    )
+    y += 17
+  }
 
   // Seção: Análise detalhada
   doc.setFillColor(248, 250, 252)
@@ -1371,7 +1482,7 @@ async function estornarVenda(id) {
   ).join('\n')
 
   confirmar(
-    `Estornar a venda #${id} (${fmtMoeda(venda.total)})?\n\nIsso removerá o registro e devolverá os itens ao estoque.\n\n${linhaItens}`,
+    `Estornar a venda #${id} (${fmtMoeda(venda.total)})?\n\nOs itens voltarão ao estoque e a venda ficará registrada como estornada.\n\n${linhaItens}`,
     async () => {
       try {
         await api.cancelarVenda(id)
@@ -1379,7 +1490,7 @@ async function estornarVenda(id) {
         await carregarProdutos()
         carregarAdminEstornos()
       } catch(err) {
-        toast(`Erro ao estornar: ${err.message}`, 'error')
+        toast(`Erro ao estornar: ${errMsg(err)}`, 'error')
       }
     }
   )
@@ -1391,7 +1502,7 @@ async function estornarVenda(id) {
 async function init() {
   iniciarRelogio()
   initDateSelectors()
-  try { await carregarProdutos() } catch(err) { toast(`Erro ao iniciar: ${err.message}`,'error') }
+  try { await carregarProdutos() } catch(err) { toast(`Erro ao iniciar: ${errMsg(err)}`,'error') }
 
   document.getElementById('data-hoje').textContent =
     new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})

@@ -1,6 +1,21 @@
-# 🍼 Baby Store — Sistema PDV
+# 🍼 Cantinho do Bebê — Sistema PDV
 
 Sistema de Ponto de Venda (PDV) completo para loja de roupas de bebê, desenvolvido com **Electron** e **SQLite**.
+
+---
+
+## 📥 Baixar o aplicativo (Windows)
+
+O instalador é gerado automaticamente a cada atualização e fica disponível na página de **Releases**:
+
+👉 **[Baixar a versão mais recente](https://github.com/Rodrigo-de-carvalho/Loja/releases/latest)**
+
+1. Baixe o arquivo `Cantinho-do-Bebe-PDV-Instalador.exe`
+2. Execute e siga o assistente (pode escolher a pasta de instalação)
+3. Um atalho é criado na Área de Trabalho e no Menu Iniciar
+
+> Os dados ficam salvos localmente e um **backup automático diário** é mantido em
+> `%APPDATA%\cantinho-do-bebe-pdv\backups` (últimos 14 dias).
 
 ---
 

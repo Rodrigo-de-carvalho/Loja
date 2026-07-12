@@ -6,6 +6,8 @@ const BetterSqlite3 = require('better-sqlite3')
 const ADMIN_EMAIL_HASH = '6ff4f69da1225301e0c5d874fbc6e144ccdf38c7b257c88d4446cae6da41aaf1'
 const ADMIN_SENHA_HASH = 'c3c8fde393540458b1ba7e2ad8045d42bfcf814aef3a549abbb10973a97ad6eb'
 
+const FORMAS_PAGAMENTO = ['dinheiro', 'pix', 'debito', 'credito']
+
 class Database {
   constructor(dbPath) {
     this.db = new BetterSqlite3(dbPath)
@@ -29,10 +31,14 @@ class Database {
       );
 
       CREATE TABLE IF NOT EXISTS vendas (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        total     REAL    NOT NULL DEFAULT 0,
-        pagamento TEXT    NOT NULL DEFAULT 'dinheiro',
-        criado_em TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        total          REAL    NOT NULL DEFAULT 0,
+        pagamento      TEXT    NOT NULL DEFAULT 'dinheiro',
+        status         TEXT    NOT NULL DEFAULT 'concluida',
+        valor_recebido REAL,
+        troco          REAL,
+        estornada_em   TEXT,
+        criado_em      TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
       );
 
       CREATE TABLE IF NOT EXISTS itens_venda (
@@ -64,8 +70,21 @@ class Database {
     }
 
     const colsVenda = this.db.prepare('PRAGMA table_info(vendas)').all()
-    if (!colsVenda.some(c => c.name === 'pagamento')) {
+    const temCol = (nome) => colsVenda.some(c => c.name === nome)
+    if (!temCol('pagamento')) {
       this.db.exec("ALTER TABLE vendas ADD COLUMN pagamento TEXT NOT NULL DEFAULT 'dinheiro'")
+    }
+    if (!temCol('status')) {
+      this.db.exec("ALTER TABLE vendas ADD COLUMN status TEXT NOT NULL DEFAULT 'concluida'")
+    }
+    if (!temCol('valor_recebido')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN valor_recebido REAL')
+    }
+    if (!temCol('troco')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN troco REAL')
+    }
+    if (!temCol('estornada_em')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN estornada_em TEXT')
     }
   }
 
@@ -97,25 +116,36 @@ class Database {
   }
 
   criarProduto({ nome, preco_venda, codigo_barras, estoque }) {
+    const preco = Math.round(Number(preco_venda) * 100) / 100
+    if (!nome || typeof nome !== 'string' || !nome.trim()) throw new Error('Nome do produto é obrigatório.')
+    if (!Number.isFinite(preco) || preco <= 0) throw new Error('Preço de venda inválido.')
+    const est = Math.max(0, Math.floor(Number(estoque) || 0))
     const { lastInsertRowid } = this.db.prepare(
       'INSERT INTO produtos (nome, preco_custo, preco_venda, codigo_barras, estoque) VALUES (?, 0, ?, ?, ?)'
-    ).run(nome, preco_venda, codigo_barras, estoque || 0)
+    ).run(nome.trim(), preco, codigo_barras, est)
     return this.db.prepare('SELECT * FROM produtos WHERE id = ?').get(lastInsertRowid)
   }
 
   atualizarProduto(id, { nome, preco_venda }) {
+    const preco = Math.round(Number(preco_venda) * 100) / 100
+    if (!nome || typeof nome !== 'string' || !nome.trim()) throw new Error('Nome do produto é obrigatório.')
+    if (!Number.isFinite(preco) || preco <= 0) throw new Error('Preço de venda inválido.')
     this.db.prepare(
       'UPDATE produtos SET nome = ?, preco_venda = ? WHERE id = ?'
-    ).run(nome, preco_venda, id)
+    ).run(nome.trim(), preco, id)
     return this.db.prepare('SELECT * FROM produtos WHERE id = ?').get(id)
   }
 
   atualizarCusto(id, preco_custo) {
-    this.db.prepare('UPDATE produtos SET preco_custo = ? WHERE id = ?').run(preco_custo, id)
+    const v = Math.round(Number(preco_custo) * 100) / 100
+    if (!Number.isFinite(v) || v < 0) throw new Error('Preço de custo inválido.')
+    this.db.prepare('UPDATE produtos SET preco_custo = ? WHERE id = ?').run(v, id)
   }
 
   atualizarEstoque(id, estoque) {
-    this.db.prepare('UPDATE produtos SET estoque = ? WHERE id = ?').run(Math.max(0, estoque), id)
+    const v = Math.floor(Number(estoque))
+    if (!Number.isFinite(v) || v < 0) throw new Error('Quantidade de estoque inválida.')
+    this.db.prepare('UPDATE produtos SET estoque = ? WHERE id = ?').run(v, id)
   }
 
   deletarProduto(id) {
@@ -129,23 +159,60 @@ class Database {
   /* -------------------------------------------------------
      VENDAS
      ------------------------------------------------------- */
-  finalizarVenda({ itens, total, pagamento }) {
-    const insertVenda  = this.db.prepare('INSERT INTO vendas (total, pagamento) VALUES (?, ?)')
-    const insertItem   = this.db.prepare(`
+  /*
+   * Preços, custos e total são SEMPRE recalculados a partir do banco —
+   * o renderer envia apenas produto_id + quantidade. Estoque é validado
+   * antes de deduzir, para que o estorno possa devolver a quantidade
+   * integral sem inflar o estoque.
+   */
+  finalizarVenda({ itens, pagamento, valor_recebido }) {
+    if (!Array.isArray(itens) || itens.length === 0) throw new Error('A venda não possui itens.')
+    const pag = FORMAS_PAGAMENTO.includes(pagamento) ? pagamento : 'dinheiro'
+
+    const getProduto  = this.db.prepare('SELECT * FROM produtos WHERE id = ?')
+    const insertVenda = this.db.prepare(
+      'INSERT INTO vendas (total, pagamento, valor_recebido, troco) VALUES (?, ?, ?, ?)'
+    )
+    const insertItem = this.db.prepare(`
       INSERT INTO itens_venda (venda_id, produto_id, nome_produto, quantidade, preco_unitario, preco_custo)
       VALUES (?, ?, ?, ?, ?, ?)
     `)
-    const decrEstoque  = this.db.prepare(
-      'UPDATE produtos SET estoque = MAX(0, estoque - ?) WHERE id = ?'
+    const decrEstoque = this.db.prepare(
+      'UPDATE produtos SET estoque = estoque - ? WHERE id = ?'
     )
 
     const transacao = this.db.transaction(() => {
-      const { lastInsertRowid: vendaId } = insertVenda.run(total, pagamento || 'dinheiro')
+      let total = 0
+      const linhas = []
+
       for (const item of itens) {
-        insertItem.run(vendaId, item.produto_id, item.nome, item.quantidade, item.preco_unitario, item.preco_custo)
-        if (item.produto_id) decrEstoque.run(item.quantidade, item.produto_id)
+        const qtd = Math.floor(Number(item.quantidade))
+        if (!Number.isFinite(qtd) || qtd <= 0) throw new Error('Quantidade inválida em um dos itens.')
+        const prod = getProduto.get(item.produto_id)
+        if (!prod) throw new Error('Produto não encontrado no cadastro. Atualize a tela e tente novamente.')
+        if (prod.estoque < qtd) {
+          throw new Error(`Estoque insuficiente para "${prod.nome}": disponível ${prod.estoque}, solicitado ${qtd}.`)
+        }
+        total += prod.preco_venda * qtd
+        linhas.push({ prod, qtd })
       }
-      return vendaId
+      total = Math.round(total * 100) / 100
+
+      let recebido = null
+      let troco    = null
+      if (pag === 'dinheiro' && valor_recebido !== null && valor_recebido !== undefined && valor_recebido !== '') {
+        recebido = Math.round(Number(valor_recebido) * 100) / 100
+        if (!Number.isFinite(recebido)) throw new Error('Valor recebido inválido.')
+        if (recebido < total) throw new Error('Valor recebido é menor que o total da venda.')
+        troco = Math.round((recebido - total) * 100) / 100
+      }
+
+      const { lastInsertRowid: vendaId } = insertVenda.run(total, pag, recebido, troco)
+      for (const { prod, qtd } of linhas) {
+        insertItem.run(vendaId, prod.id, prod.nome, qtd, prod.preco_venda, prod.preco_custo)
+        decrEstoque.run(qtd, prod.id)
+      }
+      return { vendaId, total, troco }
     })
 
     return transacao()
@@ -156,13 +223,14 @@ class Database {
       SELECT v.id, v.total, v.pagamento, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
-      WHERE date(v.criado_em) = date('now','localtime')
+      WHERE date(v.criado_em) = date('now','localtime') AND v.status = 'concluida'
       ORDER BY v.criado_em DESC
     `).all()
 
     const totais = this.db.prepare(`
       SELECT COALESCE(SUM(total),0) AS total_vendas, COUNT(id) AS num_vendas
-      FROM vendas WHERE date(criado_em) = date('now','localtime')
+      FROM vendas
+      WHERE date(criado_em) = date('now','localtime') AND status = 'concluida'
     `).get()
 
     return { vendas, totais }
@@ -176,31 +244,48 @@ class Database {
       SELECT v.id, v.total, v.pagamento, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
-      WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=?
+      WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=? AND v.status = 'concluida'
       ORDER BY v.criado_em DESC
     `).all(m, a)
 
     const totais = this.db.prepare(`
       SELECT COALESCE(SUM(total),0) AS total_vendas, COUNT(id) AS num_vendas
-      FROM vendas WHERE strftime('%m',criado_em)=? AND strftime('%Y',criado_em)=?
+      FROM vendas
+      WHERE strftime('%m',criado_em)=? AND strftime('%Y',criado_em)=? AND status = 'concluida'
     `).get(m, a)
 
     return { vendas, totais }
   }
 
+  estornadasMensais(mes, ano) {
+    const m = String(mes).padStart(2, '0')
+    const a = String(ano)
+    return this.db.prepare(`
+      SELECT v.id, v.total, v.pagamento, v.criado_em, v.estornada_em,
+        (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
+      FROM vendas v
+      WHERE v.status = 'estornada'
+        AND strftime('%m', v.estornada_em)=? AND strftime('%Y', v.estornada_em)=?
+      ORDER BY v.estornada_em DESC
+    `).all(m, a)
+  }
+
   lucroMensal(mes, ano) {
     const m = String(mes).padStart(2, '0')
     const a = String(ano)
-    // receita: todos os itens (com ou sem custo)
-    // custo/lucro: apenas itens com preco_custo > 0 (sem custo = ignorado no lucro)
+    // receita: todos os itens de vendas concluídas
+    // custo/lucro: apenas itens com preco_custo > 0
+    // receita_sem_custo / itens_sem_custo: alertam quanto ficou fora do cálculo de lucro
     return this.db.prepare(`
       SELECT
         COALESCE(SUM(iv.preco_unitario * iv.quantidade), 0) AS receita,
         COALESCE(SUM(CASE WHEN iv.preco_custo > 0 THEN iv.preco_custo * iv.quantidade ELSE 0 END), 0) AS custo,
-        COALESCE(SUM(CASE WHEN iv.preco_custo > 0 THEN (iv.preco_unitario - iv.preco_custo) * iv.quantidade ELSE 0 END), 0) AS lucro
+        COALESCE(SUM(CASE WHEN iv.preco_custo > 0 THEN (iv.preco_unitario - iv.preco_custo) * iv.quantidade ELSE 0 END), 0) AS lucro,
+        COALESCE(SUM(CASE WHEN iv.preco_custo <= 0 THEN iv.preco_unitario * iv.quantidade ELSE 0 END), 0) AS receita_sem_custo,
+        COALESCE(SUM(CASE WHEN iv.preco_custo <= 0 THEN iv.quantidade ELSE 0 END), 0) AS itens_sem_custo
       FROM itens_venda iv
       JOIN vendas v ON iv.venda_id = v.id
-      WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=?
+      WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=? AND v.status = 'concluida'
     `).get(m, a)
   }
 
@@ -210,23 +295,37 @@ class Database {
     return { venda, itens }
   }
 
+  /*
+   * Estorno mantém o registro da venda (trilha de auditoria): marca como
+   * 'estornada' em vez de apagar, e devolve os itens ao estoque.
+   */
   cancelarVenda(id) {
     const restaurarEstoque = this.db.prepare(
       'UPDATE produtos SET estoque = estoque + ? WHERE id = ?'
     )
-    const deleteVenda = this.db.prepare('DELETE FROM vendas WHERE id = ?')
-    const getItens    = this.db.prepare('SELECT * FROM itens_venda WHERE venda_id = ?')
+    const getItens = this.db.prepare('SELECT * FROM itens_venda WHERE venda_id = ?')
 
     const transacao = this.db.transaction(() => {
-      const itens = getItens.all(id)
-      for (const item of itens) {
+      const venda = this.db.prepare('SELECT * FROM vendas WHERE id = ?').get(id)
+      if (!venda) throw new Error(`Venda #${id} não encontrada.`)
+      if (venda.status === 'estornada') throw new Error(`Venda #${id} já foi estornada.`)
+
+      for (const item of getItens.all(id)) {
         if (item.produto_id) restaurarEstoque.run(item.quantidade, item.produto_id)
       }
-      return deleteVenda.run(id)
+      this.db.prepare(
+        "UPDATE vendas SET status = 'estornada', estornada_em = datetime('now','localtime') WHERE id = ?"
+      ).run(id)
+      return { ok: true }
     })
 
     return transacao()
   }
+
+  /* -------------------------------------------------------
+     BACKUP
+     ------------------------------------------------------- */
+  backup(destino) { return this.db.backup(destino) }
 
   fechar() { this.db.close() }
 }

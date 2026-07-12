@@ -2,10 +2,27 @@
 
 const { app, BrowserWindow, ipcMain, Menu } = require('electron')
 const path     = require('path')
+const fs       = require('fs')
 const Database = require('./database')
 
 let mainWindow
 let db
+
+/* Sessão de administrador vive no processo main: os handlers sensíveis
+   só executam após login válido, independente do que o renderer diga. */
+let adminLogado     = false
+let tentativasLogin = 0
+let bloqueadoAte    = 0
+
+const LIMITE_TENTATIVAS = 5
+const TEMPO_BLOQUEIO_MS = 30_000
+
+function exigirAdmin(fn) {
+  return (event, ...args) => {
+    if (!adminLogado) throw new Error('Acesso negado: faça login como administrador.')
+    return fn(event, ...args)
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -44,24 +61,69 @@ function registrarHandlers() {
   ipcMain.handle('produtos:deletar',         (_, id)      => db.deletarProduto(id))
   ipcMain.handle('produtos:buscarPorCodigo', (_, c)       => db.buscarPorCodigo(c))
 
-  /* Admin — protegido no nível do banco */
-  ipcMain.handle('admin:verificar',          (_, eH, sH)  => db.verificarAdmin(eH, sH))
-  ipcMain.handle('admin:atualizarCusto',     (_, id, v)   => db.atualizarCusto(id, v))
-  ipcMain.handle('admin:atualizarEstoque',   (_, id, v)   => db.atualizarEstoque(id, v))
+  /* Admin — sessão controlada aqui no main */
+  ipcMain.handle('admin:login', (_, emailHash, senhaHash) => {
+    const agora = Date.now()
+    if (agora < bloqueadoAte) {
+      const seg = Math.ceil((bloqueadoAte - agora) / 1000)
+      return { ok: false, error: `Muitas tentativas. Aguarde ${seg} segundos.` }
+    }
+    if (db.verificarAdmin(emailHash, senhaHash)) {
+      adminLogado     = true
+      tentativasLogin = 0
+      return { ok: true }
+    }
+    tentativasLogin++
+    if (tentativasLogin >= LIMITE_TENTATIVAS) {
+      bloqueadoAte    = agora + TEMPO_BLOQUEIO_MS
+      tentativasLogin = 0
+      return { ok: false, error: `Muitas tentativas. Aguarde ${TEMPO_BLOQUEIO_MS / 1000} segundos.` }
+    }
+    return { ok: false, error: 'E-mail ou senha incorretos.' }
+  })
+  ipcMain.handle('admin:logout', () => { adminLogado = false; return { ok: true } })
+
+  ipcMain.handle('admin:atualizarCusto',   exigirAdmin((_, id, v) => db.atualizarCusto(id, v)))
+  ipcMain.handle('admin:atualizarEstoque', exigirAdmin((_, id, v) => db.atualizarEstoque(id, v)))
 
   /* Vendas */
-  ipcMain.handle('vendas:finalizar',  (_, d)       => db.finalizarVenda(d))
-  ipcMain.handle('vendas:cancelar',   (_, id)      => db.cancelarVenda(id))
-  ipcMain.handle('vendas:hoje',       ()           => db.vendasHoje())
-  ipcMain.handle('vendas:mensais',    (_, m, a)    => db.vendasMensais(m, a))
-  ipcMain.handle('vendas:lucro',      (_, m, a)    => db.lucroMensal(m, a))
-  ipcMain.handle('vendas:detalhes',   (_, id)      => db.detalhesVenda(id))
+  ipcMain.handle('vendas:finalizar',  (_, d)    => db.finalizarVenda(d))
+  ipcMain.handle('vendas:hoje',       ()        => db.vendasHoje())
+  ipcMain.handle('vendas:mensais',    (_, m, a) => db.vendasMensais(m, a))
+  ipcMain.handle('vendas:detalhes',   (_, id)   => db.detalhesVenda(id))
+
+  /* Vendas — somente admin */
+  ipcMain.handle('vendas:cancelar',   exigirAdmin((_, id)   => db.cancelarVenda(id)))
+  ipcMain.handle('vendas:lucro',      exigirAdmin((_, m, a) => db.lucroMensal(m, a)))
+  ipcMain.handle('vendas:estornadas', exigirAdmin((_, m, a) => db.estornadasMensais(m, a)))
+}
+
+/* Backup diário automático em userData/backups (mantém os 14 mais recentes) */
+async function backupDiario() {
+  try {
+    const dir = path.join(app.getPath('userData'), 'backups')
+    fs.mkdirSync(dir, { recursive: true })
+    const hoje    = new Date().toISOString().slice(0, 10)
+    const destino = path.join(dir, `loja-bebe-${hoje}.db`)
+    if (!fs.existsSync(destino)) {
+      await db.backup(destino)
+      const arquivos = fs.readdirSync(dir)
+        .filter(f => f.startsWith('loja-bebe-') && f.endsWith('.db'))
+        .sort()
+      while (arquivos.length > 14) {
+        fs.unlinkSync(path.join(dir, arquivos.shift()))
+      }
+    }
+  } catch (err) {
+    console.error('Falha no backup automático:', err)
+  }
 }
 
 app.whenReady().then(() => {
   const dbPath = path.join(app.getPath('userData'), 'loja-bebe.db')
   db = new Database(dbPath)
   registrarHandlers()
+  backupDiario()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

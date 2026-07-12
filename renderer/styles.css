@@ -1301,3 +1301,6 @@ code {
   background: var(--warning-light);
 }
 }
+
+/* Mensagens de confirmação com múltiplas linhas */
+#confirmar-msg { white-space: pre-line; }

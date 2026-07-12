@@ -1,0 +1,43 @@
+name: Build Instalador Windows
+
+on:
+  push:
+    branches:
+      - claude/pos-system-analysis-33eswl
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar instalador (NSIS)
+        run: npm run build:win
+
+      - name: Publicar Release com o instalador
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.1.${{ github.run_number }}
+          name: Cantinho do Bebê PDV v1.1.${{ github.run_number }}
+          body: |
+            Instalador do sistema PDV Cantinho do Bebê para Windows (64 bits).
+
+            **Como instalar:** baixe o arquivo `Cantinho-do-Bebe-PDV-Instalador.exe` abaixo,
+            execute e siga o assistente de instalação.
+          files: dist/*.exe
+          fail_on_unmatched_files: true

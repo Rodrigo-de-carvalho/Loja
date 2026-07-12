@@ -11,15 +11,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   buscarPorCodigo:  (c)         => ipcRenderer.invoke('produtos:buscarPorCodigo', c),
 
   /* Admin */
-  verificarAdmin:       (eH, sH)  => ipcRenderer.invoke('admin:verificar', eH, sH),
+  adminLogin:           (eH, sH)  => ipcRenderer.invoke('admin:login', eH, sH),
+  adminLogout:          ()        => ipcRenderer.invoke('admin:logout'),
   adminAtualizarCusto:  (id, v)   => ipcRenderer.invoke('admin:atualizarCusto', id, v),
   adminAtualizarEstoque:(id, v)   => ipcRenderer.invoke('admin:atualizarEstoque', id, v),
 
   /* Vendas */
-  finalizarVenda: (d)         => ipcRenderer.invoke('vendas:finalizar', d),
-  cancelarVenda:  (id)        => ipcRenderer.invoke('vendas:cancelar', id),
-  vendasHoje:     ()          => ipcRenderer.invoke('vendas:hoje'),
-  vendasMensais:  (m, a)      => ipcRenderer.invoke('vendas:mensais', m, a),
-  lucroMensal:    (m, a)      => ipcRenderer.invoke('vendas:lucro', m, a),
-  detalhesVenda:  (id)        => ipcRenderer.invoke('vendas:detalhes', id)
+  finalizarVenda:    (d)      => ipcRenderer.invoke('vendas:finalizar', d),
+  cancelarVenda:     (id)     => ipcRenderer.invoke('vendas:cancelar', id),
+  vendasHoje:        ()       => ipcRenderer.invoke('vendas:hoje'),
+  vendasMensais:     (m, a)   => ipcRenderer.invoke('vendas:mensais', m, a),
+  estornadasMensais: (m, a)   => ipcRenderer.invoke('vendas:estornadas', m, a),
+  lucroMensal:       (m, a)   => ipcRenderer.invoke('vendas:lucro', m, a),
+  detalhesVenda:     (id)     => ipcRenderer.invoke('vendas:detalhes', id)
 })
