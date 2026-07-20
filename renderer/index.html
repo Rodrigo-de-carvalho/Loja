@@ -303,7 +303,35 @@
           <button class="tab-btn" data-admin-tab="estoque">📦 Estoque</button>
           <button class="tab-btn" data-admin-tab="historico">📆 Histórico</button>
           <button class="tab-btn" data-admin-tab="lucro">📊 Lucro Mensal</button>
+          <button class="tab-btn" data-admin-tab="taxas">💳 Taxas</button>
           <button class="tab-btn" data-admin-tab="estornos">↩ Estornos</button>
+        </div>
+
+        <!-- Taxas da maquininha (somente admin) -->
+        <div id="admin-tab-taxas" class="tab-pane">
+          <p class="page-sub" style="margin-bottom:16px;">
+            Informe as taxas do seu plano na maquininha (SumUp). O sistema usa esses percentuais para
+            estimar o <strong>valor líquido</strong> que você recebe — mostrado no Histórico e no Lucro Mensal.
+          </p>
+          <div class="card" style="padding:20px; max-width:520px;">
+            <div class="form-group">
+              <label>Débito (%)</label>
+              <input type="number" id="taxa-debito" min="0" max="100" step="0.01" placeholder="1,99">
+            </div>
+            <div class="form-group">
+              <label>Crédito à vista (%)</label>
+              <input type="number" id="taxa-credito-vista" min="0" max="100" step="0.01" placeholder="4,99">
+            </div>
+            <div class="form-group">
+              <label>Crédito parcelado (%)</label>
+              <input type="number" id="taxa-credito-parcelado" min="0" max="100" step="0.01" placeholder="5,99">
+            </div>
+            <div class="form-group">
+              <label>PIX (%)</label>
+              <input type="number" id="taxa-pix" min="0" max="100" step="0.01" placeholder="0">
+            </div>
+            <button class="btn btn-primary" id="btn-salvar-taxas">Salvar taxas</button>
+          </div>
         </div>
 
         <!-- Histórico por período (somente admin) -->
@@ -540,6 +568,18 @@
             <span class="pag-icon">💵</span>
             <span>Dinheiro</span>
           </button>
+        </div>
+
+        <!-- Parcelamento (aparece ao escolher Crédito) -->
+        <div id="pagamento-credito-box" style="display:none; border-top:1px solid var(--border); padding-top:12px;">
+          <div class="form-group">
+            <label>Parcelamento (na maquininha)</label>
+            <select id="select-parcelas"></select>
+          </div>
+          <div class="pagamento-total-row" style="margin-bottom:12px;">
+            Valor da parcela: <strong id="parcela-preview">—</strong>
+          </div>
+          <button class="btn btn-success btn-block" id="btn-confirmar-credito">✅ Confirmar crédito</button>
         </div>
 
         <!-- Troco (aparece ao escolher Dinheiro) -->

@@ -65,6 +65,30 @@ const PAGAMENTO_PDF = {
 const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
+/* Rótulo de pagamento com parcelas (ex.: "💳 Crédito 3x") */
+function pagStr(v) {
+  let s = PAGAMENTO_LABEL[v.pagamento] || v.pagamento
+  if (v.pagamento === 'credito' && v.parcelas > 1) s += ` ${v.parcelas}x`
+  return s
+}
+
+/* Taxa (%) aplicável a uma venda, conforme configuração da maquininha */
+function taxaDaVenda(taxas, v) {
+  if (!taxas || v.total <= 0) return 0
+  if (v.pagamento === 'debito')  return taxas.debito
+  if (v.pagamento === 'credito') return v.parcelas > 1 ? taxas.credito_parcelado : taxas.credito_vista
+  if (v.pagamento === 'pix')     return taxas.pix
+  return 0
+}
+function calcularLiquido(taxas, vendas) {
+  let taxaTotal = 0
+  for (const v of vendas) {
+    if (v.total > 0) taxaTotal += v.total * (taxaDaVenda(taxas, v) / 100)
+  }
+  const bruto = vendas.reduce((s, v) => s + v.total, 0)
+  return { taxaTotal: Math.round(taxaTotal*100)/100, liquido: Math.round((bruto - taxaTotal)*100)/100 }
+}
+
 /* ============================================================
    CRYPTO — hash SHA-256 usando Web Crypto API (Electron/Chromium)
    ============================================================ */
@@ -533,6 +557,7 @@ document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
 
   document.getElementById('pagamento-total-valor').textContent = fmtMoeda(total)
   document.getElementById('pagamento-dinheiro-box').style.display = 'none'
+  document.getElementById('pagamento-credito-box').style.display = 'none'
   document.getElementById('input-valor-recebido').value = ''
   document.getElementById('troco-preview').textContent = 'R$ 0,00'
 
@@ -551,13 +576,14 @@ document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
 })
 
 /* Conclui a venda: o backend recalcula preços/total e valida o estoque */
-async function concluirVenda(pagamento, valorRecebido) {
+async function concluirVenda(pagamento, valorRecebido, parcelas) {
   try {
     const itens = carrinho.map(i=>({ produto_id:i.produto_id, quantidade:i.quantidade }))
     const res = await api.finalizarVenda({
       itens,
       pagamento,
       valor_recebido: valorRecebido,
+      parcelas:   parcelas || 1,
       desconto:   calcTotais().desconto,
       venda_ref:  trocaAtual ? trocaAtual.venda_ref : null,
       devolvidos: trocaAtual ? trocaAtual.devolvidos.map(d=>({ item_id:d.item_id, quantidade:d.quantidade })) : []
@@ -566,9 +592,12 @@ async function concluirVenda(pagamento, valorRecebido) {
     document.getElementById('venda-ok-total-label').textContent =
       res.total < 0 ? 'Devolver ao cliente:' : 'Total cobrado:'
     document.getElementById('venda-ok-total').textContent = fmtMoeda(Math.abs(res.total))
+    let pagLabel = PAGAMENTO_LABEL[pagamento]||pagamento
+    if (pagamento==='credito' && (parcelas||1) > 1 && res.total > 0) {
+      pagLabel += ` ${parcelas}x de ${fmtMoeda(res.total/parcelas)}`
+    }
     document.getElementById('venda-ok-pagamento').textContent =
-      res.tipo === 'troca' ? `🔁 Troca${res.total>0 ? ' — diferença em '+(PAGAMENTO_LABEL[pagamento]||pagamento) : ''}`
-                           : (PAGAMENTO_LABEL[pagamento]||pagamento)
+      res.tipo === 'troca' ? `🔁 Troca${res.total>0 ? ' — diferença em '+pagLabel : ''}` : pagLabel
     const trocoEl = document.getElementById('venda-ok-troco')
     if (pagamento==='dinheiro' && res.total>0 && res.troco!==null && res.troco!==undefined) {
       trocoEl.textContent = `Troco: ${fmtMoeda(res.troco)}`
@@ -594,14 +623,40 @@ document.querySelectorAll('.pagamento-btn').forEach(btn=>{
     const pagamento = btn.dataset.pag
     if (pagamento === 'dinheiro') {
       // mostra o painel de troco em vez de finalizar direto
+      document.getElementById('pagamento-credito-box').style.display = 'none'
       document.getElementById('pagamento-dinheiro-box').style.display = 'block'
       document.getElementById('input-valor-recebido').value = ''
       document.getElementById('troco-preview').textContent = 'R$ 0,00'
       setTimeout(()=>document.getElementById('input-valor-recebido').focus(), 80)
       return
     }
+    if (pagamento === 'credito') {
+      // mostra o painel de parcelamento (1x a 12x)
+      document.getElementById('pagamento-dinheiro-box').style.display = 'none'
+      const box = document.getElementById('pagamento-credito-box')
+      const sel = document.getElementById('select-parcelas')
+      const total = calcTotais().total
+      sel.innerHTML = Array.from({length:12},(_,i)=>{
+        const n = i+1
+        const rotulo = n===1 ? `À vista (1x de ${fmtMoeda(total)})` : `${n}x de ${fmtMoeda(total/n)}`
+        return `<option value="${n}">${rotulo}</option>`
+      }).join('')
+      document.getElementById('parcela-preview').textContent = fmtMoeda(total)
+      box.style.display = 'block'
+      return
+    }
     await concluirVenda(pagamento, null)
   })
+})
+
+document.getElementById('select-parcelas').addEventListener('change', ()=>{
+  const n = parseInt(document.getElementById('select-parcelas').value) || 1
+  document.getElementById('parcela-preview').textContent = fmtMoeda(calcTotais().total / n)
+})
+
+document.getElementById('btn-confirmar-credito').addEventListener('click', async ()=>{
+  const n = parseInt(document.getElementById('select-parcelas').value) || 1
+  await concluirVenda('credito', null, n)
 })
 
 /* Cálculo de troco em tempo real */
@@ -827,7 +882,7 @@ async function carregarHoje() {
     : dados.vendas.map(v=>`<tr>
         <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
         <td>${fmtHora(v.criado_em)}</td>
-        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+        <td><span class="badge-pagamento">${pagStr(v)}</span></td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
         <td><strong>${fmtMoeda(v.total)}</strong></td>
         <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
@@ -929,12 +984,17 @@ async function carregarHistorico() {
   if (!r) { toast('Informe o período.','warn'); return }
   try {
     const dados = await api.vendasPeriodo(r.ini, r.fim)
+    let taxas = null
+    try { taxas = await api.getTaxas() } catch(_) {}
+    const liq = calcularLiquido(taxas, dados.vendas)
     document.getElementById('hist-periodo-label').textContent =
       `${r.label} — ${r.ini === r.fim ? '1 dia' : `${fmtData(r.ini)} até ${fmtData(r.fim)}`}`
     document.getElementById('stats-historico').innerHTML = `
       <div class="stat-card"><span class="stat-label">Período</span><span class="stat-value" style="font-size:16px;">${r.label}</span></div>
       <div class="stat-card"><span class="stat-label">Vendas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
       <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
+      <div class="stat-card"><span class="stat-label">Taxas maquininha (est.)</span><span class="stat-value red">− ${fmtMoeda(liq.taxaTotal)}</span></div>
+      <div class="stat-card highlight"><span class="stat-label">Líquido a receber (est.)</span><span class="stat-value green">${fmtMoeda(liq.liquido)}</span></div>
       <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
 
     const tbody = document.getElementById('tbody-historico')
@@ -943,7 +1003,7 @@ async function carregarHistorico() {
       : dados.vendas.map(v=>`<tr>
           <td><code>#${v.id}</code>${v.tipo==='troca'?' 🔁':''}</td>
           <td>${fmtDH(v.criado_em)}</td>
-          <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+          <td><span class="badge-pagamento">${pagStr(v)}</span></td>
           <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
           <td><strong>${fmtMoeda(v.total)}</strong></td>
           <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
@@ -959,7 +1019,7 @@ async function verDetalhesVenda(id) {
   const {venda, itens} = await api.detalhesVenda(id)
   const tipoStr = venda.tipo==='troca' ? ' — 🔁 Troca' + (venda.venda_ref?` da venda #${venda.venda_ref}`:'') : ''
   document.getElementById('detalhes-venda-titulo').textContent =
-    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}${tipoStr}`
+    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${pagStr(venda)}${tipoStr}`
   document.getElementById('tbody-detalhes-venda').innerHTML = itens.map(i=>{
     const devolucao = i.quantidade < 0
     return `<tr${devolucao?' style="background:#fff7ed;"':''}>
@@ -991,7 +1051,8 @@ async function gerarComprovante(vendaId) {
   const alturaItens  = itens.reduce((s, i) => s + (Math.abs(i.quantidade) > 1 ? 11 : 6), 0)
   const linhasExtras = (venda.desconto > 0 ? 5 : 0) +
                        (venda.valor_recebido && venda.total > 0 ? 10 : 0) +
-                       (venda.tipo === 'troca' ? 8 : 0)
+                       (venda.tipo === 'troca' ? 8 : 0) +
+                       (venda.parcelas > 1 ? 5 : 0)
   const alturaTotal  = 85 + alturaItens + linhasExtras
 
   const doc = new jsPDF({ unit: 'mm', format: [W, alturaTotal], orientation: 'portrait' })
@@ -1031,9 +1092,18 @@ async function gerarComprovante(vendaId) {
   doc.setFont('helvetica', 'bold');   doc.text(fmtDH(venda.criado_em), W - m, y, { align: 'right' })
   y += 5
 
+  const pagPdf = (PAGAMENTO_PDF[venda.pagamento] || venda.pagamento) +
+                 (venda.pagamento === 'credito' && venda.parcelas > 1 ? ` ${venda.parcelas}x` : '')
   doc.setFont('helvetica', 'normal'); doc.text('Pagamento:', m, y)
-  doc.setFont('helvetica', 'bold');   doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m, y, { align: 'right' })
+  doc.setFont('helvetica', 'bold');   doc.text(pagPdf, W - m, y, { align: 'right' })
   y += 5
+
+  if (venda.pagamento === 'credito' && venda.parcelas > 1 && venda.total > 0) {
+    doc.setFont('helvetica', 'normal'); doc.text('Parcelas:', m, y)
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${venda.parcelas}x de ${fmtMoeda(venda.total / venda.parcelas)}`, W - m, y, { align: 'right' })
+    y += 5
+  }
 
   if (venda.tipo === 'troca' && venda.venda_ref) {
     doc.setFont('helvetica', 'normal'); doc.text('Troca da venda:', m, y)
@@ -1530,8 +1600,36 @@ document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
     if(btn.dataset.adminTab==='estoque')   carregarAdminEstoque()
     if(btn.dataset.adminTab==='historico') carregarHistorico()
     if(btn.dataset.adminTab==='lucro')     carregarAdminLucro()
+    if(btn.dataset.adminTab==='taxas')     carregarAdminTaxas()
     if(btn.dataset.adminTab==='estornos')  carregarAdminEstornos()
   })
+})
+
+/* --- Aba: Taxas da maquininha (admin) --- */
+async function carregarAdminTaxas() {
+  try {
+    const t = await api.getTaxas()
+    document.getElementById('taxa-debito').value            = t.debito
+    document.getElementById('taxa-credito-vista').value     = t.credito_vista
+    document.getElementById('taxa-credito-parcelado').value = t.credito_parcelado
+    document.getElementById('taxa-pix').value               = t.pix
+  } catch(err) { toast(errMsg(err),'error') }
+}
+
+document.getElementById('btn-salvar-taxas').addEventListener('click', async ()=>{
+  const taxas = {
+    debito:            parseFloat(document.getElementById('taxa-debito').value),
+    credito_vista:     parseFloat(document.getElementById('taxa-credito-vista').value),
+    credito_parcelado: parseFloat(document.getElementById('taxa-credito-parcelado').value),
+    pix:               parseFloat(document.getElementById('taxa-pix').value)
+  }
+  for (const [k,v] of Object.entries(taxas)) {
+    if (isNaN(v) || v < 0 || v > 100) { toast('Informe percentuais entre 0 e 100.','error'); return }
+  }
+  try {
+    await api.salvarTaxas(taxas)
+    toast('Taxas salvas! O líquido estimado usa os novos percentuais.','success')
+  } catch(err) { toast(errMsg(err),'error') }
 })
 
 /* --- Aba: Estornos (admin) --- */
@@ -1667,6 +1765,15 @@ async function carregarAdminLucro() {
   const {receita,custo,lucro} = d
   const pct = receita>0 ? ((lucro/receita)*100).toFixed(1) : '0'
 
+  // Taxas estimadas da maquininha sobre as vendas do mês
+  let taxaTotal = 0
+  try {
+    const taxas  = await api.getTaxas()
+    const vendas = await api.vendasMensais(mes, ano)
+    taxaTotal = calcularLiquido(taxas, vendas.vendas).taxaTotal
+  } catch(_) {}
+  const lucroFinal = Math.round((lucro - taxaTotal)*100)/100
+
   const avisoSemCusto = d.itens_sem_custo > 0
     ? `<div class="card" style="grid-column:1/-1; padding:12px 16px; border-left:4px solid var(--warn, #f59e0b); font-size:13px;">
         ⚠️ <strong>${d.itens_sem_custo}</strong> ite${d.itens_sem_custo===1?'m':'ns'} vendido${d.itens_sem_custo===1?'':'s'}
@@ -1679,7 +1786,9 @@ async function carregarAdminLucro() {
     <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
     <div class="stat-card"><span class="stat-label">Receita total</span><span class="stat-value green">${fmtMoeda(receita)}</span></div>
     <div class="stat-card"><span class="stat-label">Custo total</span><span class="stat-value red">${fmtMoeda(custo)}</span></div>
-    <div class="stat-card highlight"><span class="stat-label">Lucro líquido</span><span class="stat-value ${lucro>=0?'green':'red'}">${fmtMoeda(lucro)}</span></div>
+    <div class="stat-card"><span class="stat-label">Lucro bruto</span><span class="stat-value ${lucro>=0?'green':'red'}">${fmtMoeda(lucro)}</span></div>
+    <div class="stat-card"><span class="stat-label">Taxas maquininha (est.)</span><span class="stat-value red">− ${fmtMoeda(taxaTotal)}</span></div>
+    <div class="stat-card highlight"><span class="stat-label">Lucro após taxas</span><span class="stat-value ${lucroFinal>=0?'green':'red'}">${fmtMoeda(lucroFinal)}</span></div>
     <div class="stat-card"><span class="stat-label">Margem</span><span class="stat-value ${parseFloat(pct)>=0?'purple':'red'}">${pct}%</span></div>`
 
   const chart = document.getElementById('admin-lucro-chart')
@@ -1707,6 +1816,15 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   const dadosLucro = await api.lucroMensal(mes, ano)
   const { receita, custo, lucro } = dadosLucro
   const pct   = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
+
+  let taxaTotalPdf = 0
+  try {
+    const taxasCfg = await api.getTaxas()
+    const vendasMes = await api.vendasMensais(mes, ano)
+    taxaTotalPdf = calcularLiquido(taxasCfg, vendasMes.vendas).taxaTotal
+  } catch(_) {}
+  const lucroAposTaxas = Math.round((lucro - taxaTotalPdf)*100)/100
+
   const doc   = _novoPDF()
 
   let y = _pdfHeader(doc, 'Relatório de Lucratividade', `Período: ${MESES_PT[mes]} de ${ano}`, true)
@@ -1738,7 +1856,7 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   doc.setFillColor(248, 250, 252)
   doc.setDrawColor(226, 232, 240)
   doc.setLineWidth(0.4)
-  doc.roundedRect(14, y, 182, 54, 3, 3, 'FD')
+  doc.roundedRect(14, y, 182, 72, 3, 3, 'FD')
 
   doc.setTextColor(30, 41, 59)
   doc.setFontSize(10)
@@ -1749,13 +1867,15 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
     ['Receita bruta (total de vendas):', fmtMoeda(receita)],
     ['(-) Custo dos produtos vendidos:', fmtMoeda(custo)],
     ['(=) Lucro operacional bruto:',     fmtMoeda(lucro)],
+    ['(-) Taxas da maquininha (estimado):', fmtMoeda(taxaTotalPdf)],
+    ['(=) Lucro apos taxas (estimado):', fmtMoeda(lucroAposTaxas)],
     ['Margem de lucro sobre a receita:', `${pct}%`],
   ]
 
   doc.setFontSize(9)
   linhas.forEach(([label, valor], i) => {
     const ly = y + 18 + i * 9
-    const isTotalRow = i === 2
+    const isTotalRow = i === 2 || i === 4
     if (isTotalRow) {
       doc.setDrawColor(209, 213, 219)
       doc.setLineWidth(0.3)
@@ -1769,7 +1889,7 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
     doc.text(valor, 194, ly, { align: 'right' })
   })
 
-  y += 62
+  y += 80
 
   // Barra visual proporcional (se há receita)
   if (receita > 0) {

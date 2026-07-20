@@ -86,6 +86,8 @@ function registrarHandlers() {
 
   ipcMain.handle('admin:atualizarCusto',   exigirAdmin((_, id, v) => db.atualizarCusto(id, v)))
   ipcMain.handle('admin:atualizarEstoque', exigirAdmin((_, id, v) => db.atualizarEstoque(id, v)))
+  ipcMain.handle('admin:getTaxas',         exigirAdmin(()        => db.getTaxas()))
+  ipcMain.handle('admin:salvarTaxas',      exigirAdmin((_, t)    => db.salvarTaxas(t)))
 
   /* Vendas */
   ipcMain.handle('vendas:finalizar',  (_, d)    => db.finalizarVenda(d))

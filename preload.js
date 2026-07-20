@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adminLogout:          ()        => ipcRenderer.invoke('admin:logout'),
   adminAtualizarCusto:  (id, v)   => ipcRenderer.invoke('admin:atualizarCusto', id, v),
   adminAtualizarEstoque:(id, v)   => ipcRenderer.invoke('admin:atualizarEstoque', id, v),
+  getTaxas:             ()        => ipcRenderer.invoke('admin:getTaxas'),
+  salvarTaxas:          (t)       => ipcRenderer.invoke('admin:salvarTaxas', t),
 
   /* Vendas */
   finalizarVenda:    (d)      => ipcRenderer.invoke('vendas:finalizar', d),

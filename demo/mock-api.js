@@ -30,7 +30,10 @@
 
   /* ---------- seed de demonstração ---------- */
   function seed() {
-    var d = { seqProduto: 0, seqVenda: 0, seqItem: 0, produtos: [], vendas: [], itens: [] }
+    var d = {
+      seqProduto: 0, seqVenda: 0, seqItem: 0, produtos: [], vendas: [], itens: [],
+      taxas: { debito: 1.99, credito_vista: 4.99, credito_parcelado: 5.99, pix: 0 }
+    }
 
     function prod(nome, custo, venda, estoque) {
       d.seqProduto++
@@ -71,7 +74,7 @@
       var troco = (pagamento === 'dinheiro' && recebido) ? r2(recebido - total) : null
       d.vendas.push({
         id: d.seqVenda, total: total, pagamento: pagamento, status: 'concluida', tipo: 'venda',
-        desconto: desconto || 0, venda_ref: null,
+        desconto: desconto || 0, venda_ref: null, parcelas: pagamento === 'credito' && d.seqVenda % 2 === 0 ? 3 : 1,
         valor_recebido: recebido || null, troco: troco, estornada_em: null, criado_em: criado
       })
     }
@@ -120,7 +123,8 @@
     return lista.map(function (v) {
       return {
         id: v.id, total: v.total, pagamento: v.pagamento, tipo: v.tipo,
-        desconto: v.desconto, criado_em: v.criado_em, estornada_em: v.estornada_em,
+        desconto: v.desconto, parcelas: v.parcelas || 1,
+        criado_em: v.criado_em, estornada_em: v.estornada_em,
         num_itens: numItens(v.id)
       }
     })
@@ -192,6 +196,26 @@
     },
     adminLogout: function () { adminLogado = false; return okAsync({ ok: true }) },
 
+    getTaxas: function () {
+      if (!adminLogado) return falha('Acesso negado: faça login como administrador.')
+      if (!db.taxas) db.taxas = { debito: 1.99, credito_vista: 4.99, credito_parcelado: 5.99, pix: 0 }
+      return okAsync(JSON.parse(JSON.stringify(db.taxas)))
+    },
+    salvarTaxas: function (t) {
+      if (!adminLogado) return falha('Acesso negado: faça login como administrador.')
+      var nomes = ['debito', 'credito_vista', 'credito_parcelado', 'pix']
+      for (var i = 0; i < nomes.length; i++) {
+        var v = Number(t[nomes[i]])
+        if (!isFinite(v) || v < 0 || v > 100) return falha('Taxa inválida para ' + nomes[i] + '.')
+      }
+      db.taxas = {
+        debito: Number(t.debito), credito_vista: Number(t.credito_vista),
+        credito_parcelado: Number(t.credito_parcelado), pix: Number(t.pix)
+      }
+      salvar()
+      return okAsync(JSON.parse(JSON.stringify(db.taxas)))
+    },
+
     adminAtualizarCusto: function (id, v) {
       if (!adminLogado) return falha('Acesso negado: faça login como administrador.')
       var p = getProduto(id); if (!p) return falha('Produto não encontrado.')
@@ -214,6 +238,12 @@
       if (!novos.length && !devs.length) return falha('A venda não possui itens.')
       if (devs.length && !dados.venda_ref) return falha('Troca sem venda de origem.')
       var pag = FORMAS.indexOf(dados.pagamento) >= 0 ? dados.pagamento : 'dinheiro'
+
+      var parc = 1
+      if (pag === 'credito') {
+        parc = Math.floor(Number(dados.parcelas || 1))
+        if (!isFinite(parc) || parc < 1 || parc > 12) return falha('Número de parcelas inválido (1 a 12).')
+      }
 
       var subtotal = 0, linhasNovas = []
       for (var i = 0; i < novos.length; i++) {
@@ -269,7 +299,7 @@
       db.seqVenda++
       db.vendas.push({
         id: db.seqVenda, total: total, pagamento: pag, status: 'concluida', tipo: tipo,
-        desconto: desc, venda_ref: devs.length ? Number(dados.venda_ref) : null,
+        desconto: desc, venda_ref: devs.length ? Number(dados.venda_ref) : null, parcelas: parc,
         valor_recebido: recebido, troco: troco, estornada_em: null, criado_em: agora()
       })
       linhasNovas.forEach(function (l) {

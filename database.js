@@ -38,6 +38,7 @@ class Database {
         tipo           TEXT    NOT NULL DEFAULT 'venda',
         desconto       REAL    NOT NULL DEFAULT 0,
         venda_ref      INTEGER,
+        parcelas       INTEGER NOT NULL DEFAULT 1,
         valor_recebido REAL,
         troco          REAL,
         estornada_em   TEXT,
@@ -59,6 +60,11 @@ class Database {
         id         INTEGER PRIMARY KEY,
         email_hash TEXT    NOT NULL,
         senha_hash TEXT    NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS config (
+        chave TEXT PRIMARY KEY,
+        valor TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_vendas_data    ON vendas(criado_em);
@@ -98,6 +104,9 @@ class Database {
     }
     if (!temCol('venda_ref')) {
       this.db.exec('ALTER TABLE vendas ADD COLUMN venda_ref INTEGER')
+    }
+    if (!temCol('parcelas')) {
+      this.db.exec('ALTER TABLE vendas ADD COLUMN parcelas INTEGER NOT NULL DEFAULT 1')
     }
 
     const colsItem = this.db.prepare('PRAGMA table_info(itens_venda)').all()
@@ -190,12 +199,18 @@ class Database {
    *
    * Desconto: aplicado sobre os produtos novos, gravado em vendas.desconto.
    */
-  finalizarVenda({ itens, pagamento, valor_recebido, desconto, venda_ref, devolvidos }) {
+  finalizarVenda({ itens, pagamento, valor_recebido, desconto, venda_ref, devolvidos, parcelas }) {
     const novos = Array.isArray(itens) ? itens : []
     const devs  = Array.isArray(devolvidos) ? devolvidos : []
     if (!novos.length && !devs.length) throw new Error('A venda não possui itens.')
     if (devs.length && !venda_ref) throw new Error('Troca sem venda de origem.')
     const pag = FORMAS_PAGAMENTO.includes(pagamento) ? pagamento : 'dinheiro'
+
+    let parc = 1
+    if (pag === 'credito') {
+      parc = Math.floor(Number(parcelas || 1))
+      if (!Number.isFinite(parc) || parc < 1 || parc > 12) throw new Error('Número de parcelas inválido (1 a 12).')
+    }
 
     const getProduto  = this.db.prepare('SELECT * FROM produtos WHERE id = ?')
     const getVenda    = this.db.prepare('SELECT * FROM vendas WHERE id = ?')
@@ -206,8 +221,8 @@ class Database {
       WHERE iv.ref_item_id = ? AND iv.quantidade < 0 AND v.status = 'concluida'
     `)
     const insertVenda = this.db.prepare(`
-      INSERT INTO vendas (total, pagamento, valor_recebido, troco, desconto, tipo, venda_ref)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO vendas (total, pagamento, valor_recebido, troco, desconto, tipo, venda_ref, parcelas)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `)
     const insertItem = this.db.prepare(`
       INSERT INTO itens_venda (venda_id, produto_id, nome_produto, quantidade, preco_unitario, preco_custo, ref_item_id)
@@ -278,7 +293,7 @@ class Database {
 
       const tipo = devs.length ? 'troca' : 'venda'
       const { lastInsertRowid: vendaId } = insertVenda.run(
-        total, pag, recebido, troco, desc, tipo, devs.length ? venda_ref : null
+        total, pag, recebido, troco, desc, tipo, devs.length ? venda_ref : null, parc
       )
       for (const { prod, qtd } of linhasNovas) {
         insertItem.run(vendaId, prod.id, prod.nome, qtd, prod.preco_venda, prod.preco_custo, null)
@@ -320,7 +335,7 @@ class Database {
 
   vendasHoje() {
     const vendas = this.db.prepare(`
-      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.parcelas, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
       WHERE date(v.criado_em) = date('now','localtime') AND v.status = 'concluida'
@@ -349,7 +364,7 @@ class Database {
     if (dataIni > dataFim) throw new Error('A data inicial é maior que a data final.')
 
     const vendas = this.db.prepare(`
-      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.parcelas, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
       WHERE date(v.criado_em) BETWEEN ? AND ? AND v.status = 'concluida'
@@ -370,7 +385,7 @@ class Database {
     const a = String(ano)
 
     const vendas = this.db.prepare(`
-      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.criado_em,
+      SELECT v.id, v.total, v.pagamento, v.tipo, v.desconto, v.parcelas, v.criado_em,
         (SELECT COUNT(*) FROM itens_venda WHERE venda_id = v.id) AS num_itens
       FROM vendas v
       WHERE strftime('%m',v.criado_em)=? AND strftime('%Y',v.criado_em)=? AND v.status = 'concluida'
@@ -456,6 +471,34 @@ class Database {
     })
 
     return transacao()
+  }
+
+  /* -------------------------------------------------------
+     TAXAS DA MAQUININHA
+     ------------------------------------------------------- */
+  getTaxas() {
+    const padrao = { debito: 1.99, credito_vista: 4.99, credito_parcelado: 5.99, pix: 0 }
+    const rows = this.db.prepare("SELECT chave, valor FROM config WHERE chave LIKE 'taxa_%'").all()
+    for (const r of rows) {
+      const nome = r.chave.replace('taxa_', '')
+      if (nome in padrao) padrao[nome] = Number(r.valor)
+    }
+    return padrao
+  }
+
+  salvarTaxas(taxas) {
+    const upsert = this.db.prepare(
+      'INSERT INTO config (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor'
+    )
+    const salvar = this.db.transaction(() => {
+      for (const nome of ['debito', 'credito_vista', 'credito_parcelado', 'pix']) {
+        const v = Number(taxas[nome])
+        if (!Number.isFinite(v) || v < 0 || v > 100) throw new Error(`Taxa inválida para ${nome}.`)
+        upsert.run('taxa_' + nome, String(v))
+      }
+    })
+    salvar()
+    return this.getTaxas()
   }
 
   /* -------------------------------------------------------
