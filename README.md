@@ -1,4 +1,4 @@
-# 🍼 Baby Store — Sistema PDV
+# 🍼 Cantinho do Bebê — Sistema PDV
 
 Sistema de Ponto de Venda (PDV) completo para loja de roupas de bebê, desenvolvido com **Electron** e **SQLite**.
 
@@ -8,10 +8,27 @@ Sistema de Ponto de Venda (PDV) completo para loja de roupas de bebê, desenvolv
 
 | Módulo | Descrição |
 |---|---|
-| **Produtos** | Cadastro com nome, preço de custo, preço de venda e geração automática de código de barras |
-| **Etiquetas** | Impressão de etiquetas com código de barras e preço em papel adesivo |
-| **Caixa** | Leitura via leitor USB ou digitação manual, carrinho com controle de quantidade, finalização de venda |
-| **Relatórios** | Vendas do dia, histórico mensal, lucro mensal com exportação em PDF |
+| **Caixa** | Tela de PDV com leitor USB, atalhos de teclado, multiplicador de quantidade (`3*código`), aviso de estoque, desconto (R$ ou %), troco no dinheiro e comprovante térmico 80mm |
+| **Produtos** | Cadastro com código de barras gerado automaticamente ou lido da etiqueta do fornecedor (EAN), filtros de estoque baixo/zerado |
+| **Etiquetas** | Impressão de etiquetas com código de barras e preço, inclusive uma por peça em estoque |
+| **Relatórios** | Vendas do dia, histórico mensal, conferência por forma de pagamento, produtos mais vendidos, exportação em PDF |
+| **Administrador** | Preço de custo, ajuste de estoque, lucro mensal, estorno de vendas (o registro é mantido), troca de senha e backup |
+
+### Atalhos do caixa
+
+| Tecla | Ação |
+|---|---|
+| `F1` | Ir para o caixa |
+| `F2` | Buscar produto por nome |
+| `F4` | Desconto na venda |
+| `Del` | Tirar o último item lançado |
+| `F8` | Cancelar a venda atual |
+| `F10` | Finalizar (abre o pagamento; `1`–`4` escolhem a forma) |
+| `F11` | Tela cheia |
+
+### Backup
+
+O sistema guarda automaticamente uma cópia do banco por dia (últimos 30 dias) na pasta `backups`, dentro da pasta de dados indicada abaixo. Pelo painel do administrador também é possível salvar uma cópia em qualquer lugar (pendrive, nuvem).
 
 ---
 

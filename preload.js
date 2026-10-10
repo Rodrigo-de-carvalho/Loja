@@ -11,15 +11,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   buscarPorCodigo:  (c)         => ipcRenderer.invoke('produtos:buscarPorCodigo', c),
 
   /* Admin */
-  verificarAdmin:       (eH, sH)  => ipcRenderer.invoke('admin:verificar', eH, sH),
-  adminAtualizarCusto:  (id, v)   => ipcRenderer.invoke('admin:atualizarCusto', id, v),
-  adminAtualizarEstoque:(id, v)   => ipcRenderer.invoke('admin:atualizarEstoque', id, v),
+  adminLogin:            (email, senha) => ipcRenderer.invoke('admin:login', email, senha),
+  adminLogout:           ()             => ipcRenderer.invoke('admin:logout'),
+  adminAlterarSenha:     (atual, nova)  => ipcRenderer.invoke('admin:alterarSenha', atual, nova),
+  adminAtualizarCusto:   (id, v)        => ipcRenderer.invoke('admin:atualizarCusto', id, v),
+  adminAtualizarEstoque: (id, v)        => ipcRenderer.invoke('admin:atualizarEstoque', id, v),
+  adminLucro:            (m, a)         => ipcRenderer.invoke('admin:lucro', m, a),
+  adminEstornar:         (id)           => ipcRenderer.invoke('admin:estornar', id),
+  adminBackup:           ()             => ipcRenderer.invoke('admin:backup'),
+  adminListarBackups:    ()             => ipcRenderer.invoke('admin:listarBackups'),
+  adminAbrirPastaBackups:()             => ipcRenderer.invoke('admin:abrirPastaBackups'),
 
   /* Vendas */
-  finalizarVenda: (d)         => ipcRenderer.invoke('vendas:finalizar', d),
-  cancelarVenda:  (id)        => ipcRenderer.invoke('vendas:cancelar', id),
-  vendasHoje:     ()          => ipcRenderer.invoke('vendas:hoje'),
-  vendasMensais:  (m, a)      => ipcRenderer.invoke('vendas:mensais', m, a),
-  lucroMensal:    (m, a)      => ipcRenderer.invoke('vendas:lucro', m, a),
-  detalhesVenda:  (id)        => ipcRenderer.invoke('vendas:detalhes', id)
+  finalizarVenda:     (d)    => ipcRenderer.invoke('vendas:finalizar', d),
+  proximoNumeroVenda: ()     => ipcRenderer.invoke('vendas:proximoNumero'),
+  vendasHoje:         ()     => ipcRenderer.invoke('vendas:hoje'),
+  vendasMensais:      (m, a) => ipcRenderer.invoke('vendas:mensais', m, a),
+  maisVendidos:       (m, a) => ipcRenderer.invoke('vendas:maisVendidos', m, a),
+  detalhesVenda:      (id)   => ipcRenderer.invoke('vendas:detalhes', id)
 })
