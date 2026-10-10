@@ -9,7 +9,6 @@ let todosProdutos    = []
 let carrinho         = []
 let ultimoIdx        = -1
 let descontoCfg      = null   // { tipo: 'valor' | 'percentual', valor }
-let pagSelecionado   = null
 let finalizando      = false
 let produtoEditId    = null
 let confirmCallback  = null
@@ -61,11 +60,21 @@ function renderBarcode(selector, codigo, opts={}) {
   } catch(e) { console.warn('Barcode:', e); return false }
 }
 
-const PAGAMENTO_LABEL = { pix:'PIX', debito:'Débito', credito:'Crédito', dinheiro:'Dinheiro' }
-const PAGAMENTO_ICON  = { pix:'pix', debito:'card', credito:'card', dinheiro:'cash' }
+const PAGAMENTO_LABEL = { pix:'PIX', debito:'Débito', credito:'Crédito', dinheiro:'Dinheiro', fiado:'Fiado', vale:'Vale-troca', multiplo:'Mais de uma forma' }
+const PAGAMENTO_ICON  = { pix:'pix', debito:'card', credito:'card', dinheiro:'cash', fiado:'user', vale:'ticket', multiplo:'wallet' }
 
 // Versão sem acento para uso no comprovante térmico
-const PAGAMENTO_PDF = { pix:'PIX', debito:'Debito', credito:'Credito', dinheiro:'Dinheiro' }
+const PAGAMENTO_PDF = { pix:'PIX', debito:'Debito', credito:'Credito', dinheiro:'Dinheiro', fiado:'Fiado', vale:'Vale-troca', multiplo:'Varias formas' }
+
+/* Queima de estoque: preço especial para um número limitado de peças */
+function hojeISO() { return new Date().toLocaleDateString('sv-SE') }
+function agoraTexto() { const d = new Date(); return `${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` }
+function promoAtiva(p) {
+  return !!(p && p.preco_promo > 0 && p.promo_qtd > 0 && (!p.promo_ate || p.promo_ate >= hojeISO()))
+}
+function badgeQueima(p) {
+  return promoAtiva(p) ? `<span class="badge-queima" title="Queima de estoque">Queima ${fmtMoeda(p.preco_promo)} · ${p.promo_qtd} pç</span>` : ''
+}
 
 function badgePagamento(p) {
   return `<span class="badge-pagamento">${icon(PAGAMENTO_ICON[p]||'wallet')}${PAGAMENTO_LABEL[p]||escHtml(p)}</span>`
@@ -181,6 +190,9 @@ function navigateTo(section) {
   if (section === 'caixa')      { atualizarNumeroVenda(); focarScanner() }
   if (section === 'relatorios') carregarHoje()
   if (section === 'admin')      renderAdminState()
+  if (section === 'clientes')   carregarClientes()
+  if (section === 'trocas')     abrirTrocas()
+  if (section === 'mercadorias')abrirMercadorias()
 }
 
 /* ============================================================
@@ -191,7 +203,6 @@ function iniciarRelogio() {
     const d = new Date()
     $('clock').textContent      = d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
     $('clock-date').textContent = maiuscula(d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}))
-    $('data-hoje').textContent  = maiuscula(d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))
   }
   tick(); setInterval(tick, 1000)
 }
@@ -210,6 +221,7 @@ function produtosFiltrados() {
     if (q && !p.nome.toLowerCase().includes(q) && !p.codigo_barras.includes(q)) return false
     if (filtroEstoque==='baixo')  return p.estoque > 0 && p.estoque <= ESTOQUE_BAIXO
     if (filtroEstoque==='zerado') return p.estoque <= 0
+    if (filtroEstoque==='queima') return promoAtiva(p)
     return true
   })
 }
@@ -240,7 +252,7 @@ function renderProdutos() {
   tbody.innerHTML = lista.map(p => `
     <tr>
       <td><code>${escHtml(p.codigo_barras)}</code></td>
-      <td><strong>${escHtml(p.nome)}</strong></td>
+      <td><strong>${escHtml(p.nome)}</strong> ${badgeQueima(p)}</td>
       <td class="num">${fmtMoeda(p.preco_venda)}</td>
       <td class="ctr">${badgeEstoque(p.estoque)}</td>
       <td>
@@ -280,8 +292,44 @@ function atualizarPreviewCodigo() {
          : 'Código inválido'
 }
 
+/* Queima de estoque no formulário do produto */
+function preencherPromo(p) {
+  const ativa = promoAtiva(p)
+  $('promo-ativa').checked = ativa
+  $('promo-preco').value   = ativa ? p.preco_promo : ''
+  $('promo-qtd').value     = ativa ? p.promo_qtd : ''
+  $('promo-ate').value     = ativa && p.promo_ate ? p.promo_ate : ''
+  atualizarPromoForm()
+}
+
+function atualizarPromoForm() {
+  const ativa = $('promo-ativa').checked
+  $('promo-campos').style.display = ativa ? '' : 'none'
+  const preco = parseFloat($('promo-preco').value), normal = parseFloat($('produto-venda').value)
+  const qtd = parseInt($('promo-qtd').value)
+  $('promo-resumo').textContent = !ativa ? 'Use para vender algumas peças mais baratas; depois o preço volta ao normal sozinho.'
+    : preco > 0 && qtd > 0
+      ? `As próximas ${qtd} peça(s) saem por ${fmtMoeda(preco)}${normal>0?` em vez de ${fmtMoeda(normal)}`:''}. Depois volta ao preço normal.`
+      : 'Informe o preço e quantas peças entram na queima.'
+}
+;['promo-ativa','promo-preco','promo-qtd','produto-venda'].forEach(id => $(id).addEventListener('input', atualizarPromoForm))
+
+function lerPromoForm() {
+  if (!$('promo-ativa').checked) return null
+  return { preco: parseFloat($('promo-preco').value), quantidade: parseInt($('promo-qtd').value), ate: $('promo-ate').value || null }
+}
+
+// Chamado quando outra tela pede um produto novo (ex.: entrada de mercadoria)
+let aoCriarProduto = null
+function novoProduto(codigo='', callback=null) {
+  $('btn-novo-produto').click()
+  if (codigo) { $('produto-codigo').value = codigo; atualizarPreviewCodigo() }
+  aoCriarProduto = callback
+}
+
 /* Novo produto */
 $('btn-novo-produto').addEventListener('click', () => {
+  aoCriarProduto = null
   produtoEditId = null
   $('modal-produto-titulo').textContent = 'Novo produto'
   $('form-produto').reset()
@@ -291,6 +339,7 @@ $('btn-novo-produto').addEventListener('click', () => {
   $('grupo-estoque').style.display    = ''
   $('label-estoque').textContent      = 'Estoque inicial'
   atualizarPreviewCodigo()
+  preencherPromo(null)
   openModal('modal-produto', 'produto-nome')
 })
 
@@ -320,6 +369,7 @@ function abrirEditarProduto(id) {
   $('grupo-estoque').style.display = isAdmin ? '' : 'none'
   $('label-estoque').textContent   = 'Estoque'
   atualizarPreviewCodigo()
+  preencherPromo(p)
   openModal('modal-produto', 'produto-nome')
 }
 
@@ -334,19 +384,27 @@ $('form-produto').addEventListener('submit', async e => {
   if (isNaN(preco_venda)||preco_venda<=0) { toast('Preço de venda inválido.','error'); return }
   if (estoque < 0)                        { toast('Estoque não pode ser negativo.','error'); return }
   if (!produtoEditId && !codigo)          { toast('Informe o código de barras.','error'); return }
+  const promo = lerPromoForm()
+  if (promo && !(promo.preco > 0 && promo.preco < preco_venda)) { toast('O preço da queima deve ser menor que o preço normal.','error'); return }
+  if (promo && !(promo.quantidade > 0))   { toast('Informe quantas peças entram na queima.','error'); return }
 
   try {
+    let produto
     if (produtoEditId) {
-      await api.atualizarProduto(produtoEditId, { nome, preco_venda })
+      const antes = todosProdutos.find(x=>x.id===produtoEditId)
+      produto = await api.atualizarProduto(produtoEditId, { nome, preco_venda })
       if (isAdmin) await api.adminAtualizarEstoque(produtoEditId, estoque)
+      if (promo || promoAtiva(antes)) await api.definirPromocao(produtoEditId, promo)
       toast('Produto atualizado!', 'success')
     } else {
-      await api.criarProduto({ nome, preco_venda, codigo_barras: codigo, estoque })
+      produto = await api.criarProduto({ nome, preco_venda, codigo_barras: codigo, estoque })
+      if (promo) produto = await api.definirPromocao(produto.id, promo)
       toast('Produto cadastrado!', 'success')
     }
     closeModal('modal-produto')
     await carregarProdutos()
     preencherSelectEtiquetas()
+    if (aoCriarProduto && !produtoEditId) { const cb = aoCriarProduto; aoCriarProduto = null; cb(produto) }
   } catch(err) { toast(msgErro(err), 'error') }
 })
 
@@ -446,7 +504,9 @@ function renderEtiquetasPreview() {
         <div class="etiqueta-loja">Cantinho do Bebê</div>
         <div class="etiqueta-nome">${escHtml(produto.nome)}</div>
         <svg class="etiqueta-barcode" data-codigo="${escHtml(produto.codigo_barras)}"></svg>
-        <div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>
+        ${promoAtiva(produto)
+          ? `<div class="etiqueta-de">De ${fmtMoeda(produto.preco_venda)}</div><div class="etiqueta-preco">Por ${fmtMoeda(produto.preco_promo)}</div>`
+          : `<div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>`}
       </div>`
     }
   })
@@ -467,7 +527,11 @@ $('btn-imprimir-etiquetas').addEventListener('click', ()=>{
    CAIXA
    ============================================================ */
 function focarScanner() {
-  setTimeout(()=>{ if (!modalAberto()) $('input-barcode').focus() }, 30)
+  setTimeout(()=>{
+    if (modalAberto()) return
+    if (!caixaAberto()) $('abertura-valor').focus()
+    else $('input-barcode').focus()
+  }, 30)
 }
 
 async function atualizarNumeroVenda() {
@@ -475,7 +539,25 @@ async function atualizarNumeroVenda() {
   catch(e) { $('num-venda-atual').textContent = '—' }
 }
 
-function subtotalCarrinho() { return round2(carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)) }
+/* Peças em queima saem pelo preço especial até acabar a quantidade da queima */
+function qtdNaQueima(item) { return item.promo ? Math.min(item.quantidade, item.promo.disponivel) : 0 }
+function subtotalItem(item) {
+  const q = qtdNaQueima(item)
+  return round2(q * (item.promo ? item.promo.preco : 0) + (item.quantidade - q) * item.preco_unitario)
+}
+function subtotalCarrinho() { return round2(carrinho.reduce((s,i)=>s+subtotalItem(i),0)) }
+
+/* Itens enviados para o banco: a parte em queima vira uma linha separada */
+function itensParaVenda() {
+  const lista = []
+  for (const item of carrinho) {
+    const q = qtdNaQueima(item)
+    const base = { produto_id:item.produto_id, nome:item.nome, preco_custo:item.preco_custo }
+    if (q > 0) lista.push({ ...base, quantidade:q, preco_unitario:item.promo.preco, promo:true })
+    if (item.quantidade - q > 0) lista.push({ ...base, quantidade:item.quantidade - q, preco_unitario:item.preco_unitario })
+  }
+  return lista
+}
 
 function calcDesconto(subtotal) {
   if (!descontoCfg || !descontoCfg.valor) return 0
@@ -499,6 +581,7 @@ async function adicionarItem() {
   const input = $('input-barcode')
   const texto = input.value.trim()
   if (!texto) return
+  if (!caixaAberto()) { toast('Abra o caixa antes de vender.','warn'); return }
   const { qtd, codigo } = lerEntradaScanner(texto)
   // Limpa na hora: o leitor pode mandar o próximo código antes da busca terminar
   input.value = ''
@@ -523,7 +606,8 @@ function adicionarAoCarrinho(prod, qtd=1) {
     carrinho[idx].estoque = prod.estoque
   } else {
     carrinho.push({produto_id:prod.id, nome:prod.nome, codigo:prod.codigo_barras, quantidade:qtd,
-                   preco_unitario:prod.preco_venda, preco_custo:prod.preco_custo, estoque:prod.estoque})
+                   preco_unitario:prod.preco_venda, preco_custo:prod.preco_custo, estoque:prod.estoque,
+                   promo: promoAtiva(prod) ? { preco:prod.preco_promo, disponivel:prod.promo_qtd } : null})
     idx = carrinho.length - 1
   }
   ultimoIdx = idx
@@ -553,13 +637,15 @@ function renderCarrinho() {
     </td></tr>`
   } else {
     tbody.innerHTML = carrinho.map((item,idx)=>{
-      const sub = item.quantidade * item.preco_unitario
+      const sub = subtotalItem(item)
+      const q = qtdNaQueima(item)
       const semEstoque = item.quantidade > item.estoque
       return `<tr class="${idx===ultimoIdx?'ultimo':''}">
         <td class="item-num">${String(idx+1).padStart(3,'0')}</td>
         <td>
           <div class="item-nome">${escHtml(item.nome)}${semEstoque?`<span class="item-alerta" title="Quantidade maior que o estoque cadastrado">${icon('alert')} estoque: ${item.estoque}</span>`:''}</div>
-          <div class="item-cod">${escHtml(item.codigo||'')}</div>
+          <div class="item-cod">${escHtml(item.codigo||'')}
+            ${q?`<span class="badge-queima">Queima: ${q} × ${fmtMoeda(item.promo.preco)}${item.quantidade>q?` · ${item.quantidade-q} no preço normal`:''}</span>`:''}</div>
         </td>
         <td>
           <div class="qty-control">
@@ -568,7 +654,7 @@ function renderCarrinho() {
             <button class="btn-xs" data-qtd="${idx}" data-delta="1" title="Aumentar">${icon('plus')}</button>
           </div>
         </td>
-        <td class="num">${fmtMoeda(item.preco_unitario)}</td>
+        <td class="num">${q?`<span class="preco-de">${fmtMoeda(item.preco_unitario)}</span>${fmtMoeda(item.promo.preco)}`:fmtMoeda(item.preco_unitario)}</td>
         <td class="num"><strong>${fmtMoeda(sub)}</strong></td>
         <td><button class="btn-xs danger" data-remover="${idx}" title="Remover item">${icon('x')}</button></td>
       </tr>`
@@ -580,8 +666,11 @@ function renderCarrinho() {
   // Painel lateral
   const ultimo = carrinho[ultimoIdx]
   $('ultimo-nome').textContent  = ultimo ? ultimo.nome : '—'
-  $('ultimo-qtd').textContent   = ultimo ? `${ultimo.quantidade} × ${fmtMoeda(ultimo.preco_unitario)}` : ''
-  $('ultimo-preco').textContent = ultimo ? fmtMoeda(ultimo.quantidade*ultimo.preco_unitario) : ''
+  const qQueima = ultimo ? qtdNaQueima(ultimo) : 0
+  $('ultimo-qtd').textContent   = !ultimo ? ''
+    : qQueima && qQueima < ultimo.quantidade ? `${ultimo.quantidade} un. (${qQueima} na queima)`
+    : `${ultimo.quantidade} × ${fmtMoeda(qQueima ? ultimo.promo.preco : ultimo.preco_unitario)}`
+  $('ultimo-preco').textContent = ultimo ? fmtMoeda(subtotalItem(ultimo)) : ''
 
   $('resumo-itens').textContent    = numItens
   $('resumo-subtotal').textContent = fmtMoeda(subtotal)
@@ -593,7 +682,8 @@ function renderCarrinho() {
   $('carrinho-count').textContent  = `${numItens} ${numItens!==1?'itens':'item'}`
 
   $('pdv-status').classList.toggle('ocupado', !vazio)
-  $('pdv-status-text').textContent = vazio ? 'CAIXA LIVRE' : 'VENDA EM ANDAMENTO'
+  $('pdv-status').classList.toggle('fechado', !caixaAberto())
+  $('pdv-status-text').textContent = !caixaAberto() ? 'CAIXA FECHADO' : vazio ? 'CAIXA LIVRE' : 'VENDA EM ANDAMENTO'
 
   ;['btn-finalizar-venda','btn-desconto','btn-remover-ultimo','btn-cancelar-venda']
     .forEach(id => $(id).disabled = vazio)
@@ -645,12 +735,14 @@ function cancelarVendaAtual() {
 $('btn-cancelar-venda').addEventListener('click', cancelarVendaAtual)
 
 /* Busca por nome (F2) */
-function abrirBusca() {
+let aoEscolherBusca = null
+function abrirBusca(callback=null) {
+  aoEscolherBusca = callback
   $('input-busca-caixa').value = ''
   filtrarBusca()
   openModal('modal-buscar-nome', 'input-busca-caixa')
 }
-$('btn-buscar-produto-nome').addEventListener('click', abrirBusca)
+$('btn-buscar-produto-nome').addEventListener('click', ()=>abrirBusca())
 
 function filtrarBusca() {
   const q = $('input-busca-caixa').value.trim().toLowerCase()
@@ -690,6 +782,8 @@ $('tbody-busca-caixa').addEventListener('click', e => {
 function adicionarDoModal(id) {
   const prod = todosProdutos.find(p=>p.id===id); if(!prod) return
   closeModal('modal-buscar-nome')
+  if (aoEscolherBusca) { const cb = aoEscolherBusca; aoEscolherBusca = null; cb(prod); return }
+  if (!caixaAberto()) { toast('Abra o caixa antes de vender.','warn'); return }
   adicionarAoCarrinho(prod)
   focarScanner()
 }
@@ -751,26 +845,96 @@ $('btn-remover-desconto').addEventListener('click', ()=>{
   descontoCfg = null; closeModal('modal-desconto'); renderCarrinho()
 })
 
-/* Finalizar (F10) → modal de pagamento */
-function abrirPagamento() {
+/* ============================================================
+   PAGAMENTO (pode ser dividido em mais de uma forma)
+   ============================================================ */
+const pag = { lancados: [], forma: null, cliente: null, vale: null }
+let valePendente = null   // vale-troca gerado na tela de Trocas para usar nesta venda
+let clientesCache = []
+
+const pagoAteAgora = () => round2(pag.lancados.reduce((s,p)=>s+p.valor,0))
+const faltaPagar   = () => round2(totalCarrinho() - pagoAteAgora())
+
+async function abrirPagamento() {
   if (!carrinho.length) return
-  pagSelecionado = null
+  pag.lancados = []; pag.forma = null; pag.cliente = null; pag.vale = null
   document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.remove('selecionado'))
-  $('dinheiro-box').style.display = 'none'
-  $('valor-recebido').value = ''
-  $('btn-confirmar-pagamento').disabled = true
-  $('pagamento-total-valor').textContent = fmtMoeda(totalCarrinho())
-  montarNotasRapidas(totalCarrinho())
-  // Sem foco em campo, as teclas 1–4 escolhem a forma de pagamento
+  document.querySelectorAll('.pag-painel').forEach(p=>p.classList.remove('ativo'))
+  ;['valor-recebido','valor-cartao','pag-autorizacao','fiado-busca','valor-fiado','vale-codigo','valor-vale'].forEach(id=>$(id).value='')
+  $('vale-info').innerHTML = ''
+  $('pag-parcelas').innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">${i===0?'À vista':`${i+1}x`}</option>`).join('')
+  renderPagamento()
+  // Sem foco em campo, as teclas 1–6 escolhem a forma de pagamento
   openModal('modal-pagamento')
+  try { clientesCache = await api.listarClientes() } catch(e) { clientesCache = [] }
+  if (valePendente) { selecionarPagamento('vale'); $('vale-codigo').value = valePendente; await carregarVale() }
 }
 $('btn-finalizar-venda').addEventListener('click', abrirPagamento)
 
-function montarNotasRapidas(total) {
-  const sugestoes = [total]
+function renderPagamento() {
+  const falta = faltaPagar()
+  $('pagamento-total-valor').textContent = fmtMoeda(totalCarrinho())
+  $('pagamento-pago').textContent  = fmtMoeda(pagoAteAgora())
+  $('pagamento-falta').textContent = fmtMoeda(Math.max(falta,0))
+  document.querySelector('.pag-falta').classList.toggle('quitado', falta <= 0)
+  $('pag-lancados').innerHTML = pag.lancados.map((p,i)=>`
+    <div class="pag-lancado">${icon(PAGAMENTO_ICON[p.forma])} ${PAGAMENTO_LABEL[p.forma]}
+      ${p.descricao?`<small>${escHtml(p.descricao)}</small>`:''}
+      <strong>${fmtMoeda(p.valor)}</strong>
+      <button data-remover-pag="${i}" title="Remover">${icon('x')}</button>
+    </div>`).join('')
+  atualizarBotaoPagamento()
+}
+
+$('pag-lancados').addEventListener('click', e=>{
+  const b = e.target.closest('[data-remover-pag]'); if (!b) return
+  pag.lancados.splice(Number(b.dataset.removerPag),1)
+  renderPagamento()
+})
+
+function selecionarPagamento(forma) {
+  if (faltaPagar() <= 0) return
+  if (forma==='dinheiro' && pag.lancados.some(p=>p.forma==='dinheiro')) { toast('O dinheiro já foi lançado.','warn'); return }
+  pag.forma = forma
+  document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.toggle('selecionado', b.dataset.pag===forma))
+  const painel = ['pix','debito','credito'].includes(forma) ? 'cartao' : forma
+  document.querySelectorAll('.pag-painel').forEach(p=>p.classList.toggle('ativo', p.dataset.painel===painel))
+  const falta = faltaPagar()
+
+  if (forma==='dinheiro') {
+    montarNotasRapidas(falta)
+    $('valor-recebido').value = ''
+    $('valor-recebido').focus()
+  }
+  if (painel==='cartao') {
+    $('valor-cartao').value = falta.toFixed(2)
+    $('pag-autorizacao').value = ''
+    $('pag-parcelas').value = '1'
+    $('grupo-parcelas').style.display = forma==='credito' ? '' : 'none'
+    $('maquininha-forma').textContent = forma==='pix' ? '(PIX)' : forma==='debito' ? 'no débito' : 'no crédito'
+    $('valor-cartao').focus(); $('valor-cartao').select()
+  }
+  if (forma==='fiado') {
+    $('valor-fiado').value = falta.toFixed(2)
+    renderListaFiado()
+    if (pag.cliente) $('valor-fiado').focus(); else $('fiado-busca').focus()
+  }
+  if (forma==='vale') {
+    $('vale-codigo').focus()
+    if (pag.vale) $('valor-vale').value = Math.min(pag.vale.saldo, falta).toFixed(2)
+  }
+  atualizarBotaoPagamento()
+}
+
+document.querySelectorAll('.pagamento-btn').forEach(btn=>
+  btn.addEventListener('click', ()=>selecionarPagamento(btn.dataset.pag))
+)
+
+function montarNotasRapidas(valor) {
+  const sugestoes = [valor]
   ;[5,10,20,50,100].forEach(n=>{
-    const v = Math.ceil(total/n)*n
-    if (v > total && !sugestoes.includes(v)) sugestoes.push(v)
+    const v = Math.ceil(valor/n)*n
+    if (v > valor && !sugestoes.includes(v)) sugestoes.push(v)
   })
   $('notas-rapidas').innerHTML = sugestoes.slice(0,5).map((v,i)=>
     `<button class="btn btn-sm btn-secondary" data-valor="${v}">${i===0?'Valor exato':fmtMoeda(v)}</button>`).join('')
@@ -779,74 +943,188 @@ function montarNotasRapidas(total) {
 $('notas-rapidas').addEventListener('click', e=>{
   const b = e.target.closest('[data-valor]'); if (!b) return
   $('valor-recebido').value = Number(b.dataset.valor).toFixed(2)
-  atualizarTroco()
+  atualizarBotaoPagamento()
   $('valor-recebido').focus()
 })
 
-function selecionarPagamento(pag) {
-  pagSelecionado = pag
-  document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.toggle('selecionado', b.dataset.pag===pag))
-  const dinheiro = pag==='dinheiro'
-  $('dinheiro-box').style.display = dinheiro ? 'flex' : 'none'
-  atualizarTroco()
-  if (dinheiro) $('valor-recebido').focus()
-  else $('btn-confirmar-pagamento').focus()
-}
+$('valor-cartao').addEventListener('input', ()=>{ atualizarMaquininha(); atualizarBotaoPagamento() })
+function atualizarMaquininha() { $('maquininha-valor').textContent = fmtMoeda(parseFloat($('valor-cartao').value)||0) }
 
-document.querySelectorAll('.pagamento-btn').forEach(btn=>
-  btn.addEventListener('click', ()=>selecionarPagamento(btn.dataset.pag))
-)
-
-function atualizarTroco() {
-  const total = totalCarrinho()
-  const btn   = $('btn-confirmar-pagamento')
-  if (pagSelecionado !== 'dinheiro') { btn.disabled = !pagSelecionado; return }
-  const txt = $('valor-recebido').value
-  const recebido = txt === '' ? total : parseFloat(txt)
-  const troco = round2(recebido - total)
-  const row = document.querySelector('.troco-row')
-  if (isNaN(recebido) || troco < 0) {
-    row.classList.add('falta')
-    row.firstElementChild.textContent = 'Falta'
-    $('troco-valor').textContent = isNaN(recebido) ? '—' : fmtMoeda(-troco)
-    btn.disabled = true
-  } else {
-    row.classList.remove('falta')
-    row.firstElementChild.textContent = 'Troco'
-    $('troco-valor').textContent = fmtMoeda(troco)
-    btn.disabled = false
+/* Lê o painel da forma escolhida e devolve o pagamento a lançar (ou o motivo de não poder) */
+function pagamentoDigitado() {
+  const falta = faltaPagar()
+  const f = pag.forma
+  if (!f) return { erro: 'Escolha a forma de pagamento.' }
+  if (f==='dinheiro') {
+    const txt = $('valor-recebido').value
+    const recebido = txt==='' ? falta : round2(parseFloat(txt))
+    if (isNaN(recebido) || recebido <= 0) return { erro: 'Valor recebido inválido.' }
+    const valor = Math.min(recebido, falta)
+    return { forma:f, valor, recebido, troco: round2(recebido - valor),
+             descricao: recebido > valor ? `recebido ${fmtMoeda(recebido)}` : '' }
+  }
+  if (['pix','debito','credito'].includes(f)) {
+    const valor = round2(parseFloat($('valor-cartao').value))
+    if (!(valor > 0)) return { erro: 'Valor inválido.' }
+    if (valor > falta + 0.001) return { erro: `No ${PAGAMENTO_LABEL[f]} o valor não pode passar de ${fmtMoeda(falta)}.` }
+    const parcelas = f==='credito' ? parseInt($('pag-parcelas').value) : 1
+    const aut = $('pag-autorizacao').value.trim()
+    const partes = [parcelas>1?`${parcelas}x`:'', aut?`aut. ${aut}`:''].filter(Boolean)
+    return { forma:f, valor, detalhe: partes.join(' · ') || null, descricao: partes.join(' · ') }
+  }
+  if (f==='fiado') {
+    if (!pag.cliente) return { erro: 'Escolha o cliente do fiado.' }
+    const valor = round2(parseFloat($('valor-fiado').value))
+    if (!(valor > 0) || valor > falta + 0.001) return { erro: 'Valor do fiado inválido.' }
+    return { forma:f, valor, descricao: pag.cliente.nome }
+  }
+  if (f==='vale') {
+    if (!pag.vale) return { erro: 'Leia o código do vale-troca.' }
+    if (pag.lancados.some(p=>p.forma==='vale' && p.detalhe===pag.vale.codigo)) return { erro: 'Este vale já foi lançado.' }
+    const valor = round2(parseFloat($('valor-vale').value))
+    if (!(valor > 0)) return { erro: 'Valor do vale inválido.' }
+    if (valor > pag.vale.saldo + 0.001) return { erro: `O vale tem só ${fmtMoeda(pag.vale.saldo)}.` }
+    if (valor > falta + 0.001) return { erro: `O valor não pode passar de ${fmtMoeda(falta)}.` }
+    return { forma:f, valor, detalhe: pag.vale.codigo, descricao: pag.vale.codigo }
   }
 }
-$('valor-recebido').addEventListener('input', atualizarTroco)
-$('valor-recebido').addEventListener('keydown', e=>{
-  if (e.key==='Enter') { e.preventDefault(); confirmarPagamento() }
+
+function atualizarBotaoPagamento() {
+  const btn = $('btn-confirmar-pagamento')
+  const falta = faltaPagar()
+  const p = falta > 0 ? pagamentoDigitado() : null
+  const fecha = falta <= 0 || (p && !p.erro && p.valor >= falta - 0.001)
+  btn.disabled = falta > 0 && (!p || !!p.erro)
+  $('btn-confirmar-texto').textContent = fecha ? 'Confirmar venda' : 'Lançar e continuar'
+
+  // Troco (dinheiro)
+  if (pag.forma==='dinheiro') {
+    const row = document.querySelector('[data-painel="dinheiro"] .troco-row')
+    if (p && !p.erro) {
+      const restante = round2(falta - p.valor)
+      row.classList.toggle('falta', restante > 0)
+      row.firstElementChild.textContent = restante > 0 ? 'Falta (pague o resto em outra forma)' : 'Troco'
+      $('troco-valor').textContent = fmtMoeda(restante > 0 ? restante : p.troco)
+    } else {
+      row.classList.add('falta'); row.firstElementChild.textContent = 'Valor inválido'; $('troco-valor').textContent = '—'
+    }
+  }
+  if (['pix','debito','credito'].includes(pag.forma)) atualizarMaquininha()
+}
+;['valor-recebido','valor-fiado','valor-vale','pag-parcelas'].forEach(id=>$(id).addEventListener('input', atualizarBotaoPagamento))
+
+// Enter em qualquer campo do pagamento lança/confirma
+;['valor-recebido','valor-cartao','pag-autorizacao','valor-fiado','valor-vale'].forEach(id=>
+  $(id).addEventListener('keydown', e=>{ if (e.key==='Enter') { e.preventDefault(); confirmarPagamento() } })
+)
+
+/* Fiado: escolha do cliente */
+function renderListaFiado() {
+  const q = $('fiado-busca').value.trim().toLowerCase()
+  const lista = clientesCache.filter(c => !q || c.nome.toLowerCase().includes(q) || (c.telefone||'').includes(q)).slice(0, 30)
+  $('fiado-lista').innerHTML = !lista.length
+    ? `<div class="side-vazio">Nenhum cliente encontrado. Use "Novo" para cadastrar.</div>`
+    : lista.map(c=>`<button class="fiado-item ${pag.cliente&&pag.cliente.id===c.id?'selecionado':''}" data-cliente="${c.id}">
+        <span><strong>${escHtml(c.nome)}</strong> <small>${escHtml(c.telefone||'')}</small></span>
+        <small>${c.saldo>0?`deve ${fmtMoeda(c.saldo)}`:'sem débito'}</small>
+      </button>`).join('')
+}
+$('fiado-busca').addEventListener('input', renderListaFiado)
+$('fiado-busca').addEventListener('keydown', e=>{
+  if (e.key!=='Enter') return
+  e.preventDefault()
+  const primeiro = $('fiado-lista').querySelector('[data-cliente]')
+  if (primeiro) primeiro.click()
 })
+$('fiado-lista').addEventListener('click', e=>{
+  const b = e.target.closest('[data-cliente]'); if (!b) return
+  pag.cliente = clientesCache.find(c=>c.id===Number(b.dataset.cliente))
+  $('fiado-busca').value = pag.cliente.nome
+  renderListaFiado()
+  atualizarBotaoPagamento()
+  $('valor-fiado').focus(); $('valor-fiado').select()
+})
+$('btn-fiado-novo-cliente').addEventListener('click', ()=>{
+  abrirCadastroCliente(null, async cliente => {
+    clientesCache = await api.listarClientes()
+    pag.cliente = clientesCache.find(c=>c.id===cliente.id)
+    $('fiado-busca').value = cliente.nome
+    renderListaFiado(); atualizarBotaoPagamento()
+    $('valor-fiado').focus()
+  })
+})
+
+/* Vale-troca */
+async function carregarVale() {
+  const codigo = $('vale-codigo').value.trim()
+  pag.vale = null
+  if (!codigo) { $('vale-info').innerHTML = ''; atualizarBotaoPagamento(); return }
+  const vale = await api.buscarVale(codigo)
+  if (!vale) {
+    $('vale-info').innerHTML = '<span class="negative">Vale-troca não encontrado.</span>'
+  } else if (vale.saldo <= 0) {
+    $('vale-info').innerHTML = `<span class="negative">O vale ${escHtml(vale.codigo)} já foi totalmente usado.</span>`
+  } else {
+    pag.vale = vale
+    $('vale-info').innerHTML = `<span class="positive">Vale ${escHtml(vale.codigo)}</span> — saldo <strong>${fmtMoeda(vale.saldo)}</strong>${vale.cliente_nome?` · ${escHtml(vale.cliente_nome)}`:''}`
+    $('valor-vale').value = Math.min(vale.saldo, faltaPagar()).toFixed(2)
+    $('valor-vale').focus(); $('valor-vale').select()
+  }
+  atualizarBotaoPagamento()
+}
+$('vale-codigo').addEventListener('keydown', e=>{ if (e.key==='Enter') { e.preventDefault(); carregarVale() } })
+$('vale-codigo').addEventListener('change', carregarVale)
 
 $('btn-confirmar-pagamento').addEventListener('click', confirmarPagamento)
 
 async function confirmarPagamento() {
-  if (!pagSelecionado || finalizando || $('btn-confirmar-pagamento').disabled) return
+  if (finalizando) return
+  if (faltaPagar() > 0) {
+    const p = pagamentoDigitado()
+    if (!p || p.erro) { if (p) toast(p.erro,'error'); return }
+    pag.lancados.push(p)
+    pag.forma = null
+    document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.remove('selecionado'))
+    document.querySelectorAll('.pag-painel').forEach(x=>x.classList.remove('ativo'))
+    renderPagamento()
+    if (faltaPagar() > 0) {
+      toast(`Lançado. Falta ${fmtMoeda(faltaPagar())} — escolha a próxima forma.`)
+      if (document.activeElement) document.activeElement.blur()
+      return
+    }
+  }
+  await finalizarVendaAtual()
+}
+
+async function finalizarVendaAtual() {
   finalizando = true
   const subtotal = subtotalCarrinho()
-  const txt = $('valor-recebido').value
+  const dinheiro = pag.lancados.find(p=>p.forma==='dinheiro')
+  const fiado    = pag.lancados.some(p=>p.forma==='fiado')
   try {
     const venda = await api.finalizarVenda({
-      itens:          carrinho,
-      pagamento:      pagSelecionado,
-      desconto:       calcDesconto(subtotal),
-      valor_recebido: pagSelecionado==='dinheiro' && txt!=='' ? parseFloat(txt) : null
+      itens:      itensParaVenda(),
+      desconto:   calcDesconto(subtotal),
+      pagamentos: pag.lancados.map(p=>({ forma:p.forma, valor:p.valor, detalhe:p.detalhe||null, recebido:p.recebido })),
+      cliente_id: fiado && pag.cliente ? pag.cliente.id : null
     })
     ultimaVendaId = venda.id
     $('venda-ok-numero').textContent    = `Venda nº ${fmtNumVenda(venda.id)}`
     $('venda-ok-total').textContent     = fmtMoeda(venda.total)
-    $('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagSelecionado]
-    const temTroco = pagSelecionado==='dinheiro'
-    $('venda-ok-troco-box').style.display = temTroco ? 'flex' : 'none'
+    const formas = [...new Set(pag.lancados.map(p=>p.forma))]
+    $('venda-ok-pagamento').textContent = formas.map(f=>PAGAMENTO_LABEL[f]).join(' + ') || '—'
+    $('venda-ok-troco-box').style.display = dinheiro ? 'flex' : 'none'
     $('venda-ok-troco').textContent = fmtMoeda(venda.troco||0)
+    if (fiado) {
+      const det = await api.detalhesVenda(venda.id)
+      $('venda-ok-fiado').innerHTML = `Fiado para <strong>${escHtml(pag.cliente.nome)}</strong>.<br>Saldo devedor agora: <strong>${fmtMoeda(det.saldoCliente)}</strong>. Imprima o comprovante para o cliente assinar.`
+    }
+    $('venda-ok-fiado').style.display = fiado ? 'block' : 'none'
+    if (pag.lancados.some(p=>p.forma==='vale')) valePendente = null
 
     $('modal-pagamento').classList.remove('open')
     carrinho = []; ultimoIdx = -1; descontoCfg = null
-    renderCarrinho()
+    renderCarrinho(); renderValeBanner()
     openModal('modal-venda-ok', 'btn-nova-venda')
     await carregarProdutos()
     await atualizarNumeroVenda()
@@ -856,6 +1134,16 @@ async function confirmarPagamento() {
     finalizando = false
   }
 }
+
+function renderValeBanner() {
+  const el = $('vale-banner')
+  el.style.display = valePendente ? 'flex' : 'none'
+  if (valePendente) el.innerHTML = `${icon('ticket')} Vale-troca <strong>${escHtml(valePendente)}</strong> será usado no pagamento desta venda.
+    <button class="link-btn" id="btn-vale-descartar">não usar agora</button>`
+}
+$('vale-banner').addEventListener('click', e=>{
+  if (e.target.closest('#btn-vale-descartar')) { valePendente = null; renderValeBanner(); focarScanner() }
+})
 
 $('btn-nova-venda').addEventListener('click', ()=>closeModal('modal-venda-ok'))
 $('btn-gerar-comprovante').addEventListener('click', ()=> gerarComprovante(ultimaVendaId))
@@ -880,7 +1168,7 @@ document.addEventListener('keydown', e => {
   if (e.key==='Escape' && modal) { e.preventDefault(); closeModal(modal); return }
 
   if (modal==='modal-pagamento') {
-    const mapa = { '1':'dinheiro', '2':'pix', '3':'debito', '4':'credito' }
+    const mapa = { '1':'dinheiro', '2':'pix', '3':'debito', '4':'credito', '5':'fiado', '6':'vale' }
     if (!emCampo && mapa[e.key]) { e.preventDefault(); selecionarPagamento(mapa[e.key]); return }
     if (e.key==='Enter' && !emCampo) { e.preventDefault(); confirmarPagamento(); return }
     return
@@ -890,9 +1178,14 @@ document.addEventListener('keydown', e => {
     if (e.key==='p' || e.key==='P')     { e.preventDefault(); gerarComprovante(ultimaVendaId) }
     return
   }
+  // Enter numa caixa de marcar também confirma o modal
+  const primario = { 'modal-receber':'btn-confirmar-receber', 'modal-movimento':'btn-salvar-movimento',
+                     'modal-fechar-caixa':'btn-confirmar-fechamento' }[modal]
+  if (primario && e.key==='Enter' && e.target.type==='checkbox') { e.preventDefault(); $(primario).click(); return }
   if (modal) return
 
   if (secaoAtiva()!=='caixa') return
+  if (!caixaAberto()) return
 
   if (e.key==='F2')  { e.preventDefault(); abrirBusca(); return }
   if (e.key==='F4')  { e.preventDefault(); abrirDesconto(); return }
@@ -919,6 +1212,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn=>{
     $(`tab-${btn.dataset.tab}`).classList.add('active')
     if(btn.dataset.tab==='hoje')   carregarHoje()
     if(btn.dataset.tab==='mensal') carregarMensal()
+    if(btn.dataset.tab==='caixas') carregarCaixas()
   })
 })
 
@@ -929,8 +1223,8 @@ function initDateSelectors() {
   const mesOpts = MESES_PT.slice(1).map((m,i)=>`<option value="${i+1}"${i+1===mesA?' selected':''}>${m}</option>`).join('')
   const anoOpts = anos.map(a=>`<option value="${a}"${a===anoA?' selected':''}>${a}</option>`).join('')
 
-  ;['sel-mes-mensal','admin-sel-mes-lucro','admin-sel-mes-estornos'].forEach(id=>{ $(id).innerHTML=mesOpts })
-  ;['sel-ano-mensal','admin-sel-ano-lucro','admin-sel-ano-estornos'].forEach(id=>{ $(id).innerHTML=anoOpts })
+  ;['sel-mes-mensal','admin-sel-mes-lucro','admin-sel-mes-estornos','sel-mes-caixas','merc-sel-mes'].forEach(id=>{ $(id).innerHTML=mesOpts })
+  ;['sel-ano-mensal','admin-sel-ano-lucro','admin-sel-ano-estornos','sel-ano-caixas','merc-sel-ano'].forEach(id=>{ $(id).innerHTML=anoOpts })
 }
 
 function statsVendas(totais) {
@@ -949,7 +1243,7 @@ function linhasVendas(vendas, comData, vazio) {
       <td><code>#${fmtNumVenda(v.id)}</code></td>
       <td>${comData?fmtDH(v.criado_em):fmtHora(v.criado_em)}</td>
       <td>${v.status==='cancelada'?'<span class="badge-status cancelada">Estornada</span>':badgePagamento(v.pagamento)}</td>
-      <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
+      <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}${v.cliente_nome?`<div class="item-cod">${escHtml(v.cliente_nome)}</div>`:''}</td>
       <td class="num"><strong>${fmtMoeda(v.total)}</strong></td>
       <td style="text-align:right;"><button class="btn btn-sm btn-outline" data-ver="${v.id}">${icon('eye')} Ver</button></td>
     </tr>`).join('')
@@ -1005,15 +1299,16 @@ $('btn-buscar-mensal').addEventListener('click', carregarMensal)
 /* Detalhes venda */
 async function verDetalhesVenda(id) {
   detalheVendaId = id
-  const {venda, itens} = await api.detalhesVenda(id)
+  const {venda, itens, pagamentos} = await api.detalhesVenda(id)
   $('detalhes-venda-titulo').textContent = `Venda nº ${fmtNumVenda(id)}`
   $('detalhes-venda-info').innerHTML = `
     <span class="info-pill">Data: <strong>${fmtDH(venda.criado_em)}</strong></span>
-    <span class="info-pill">Pagamento: <strong>${PAGAMENTO_LABEL[venda.pagamento]||escHtml(venda.pagamento)}</strong></span>
+    ${pagamentos.map(p=>`<span class="info-pill">${PAGAMENTO_LABEL[p.forma]||escHtml(p.forma)}: <strong>${fmtMoeda(p.valor)}</strong>${p.detalhe?` (${escHtml(p.detalhe)})`:''}</span>`).join('')}
+    ${venda.cliente_nome?`<span class="info-pill">Cliente: <strong>${escHtml(venda.cliente_nome)}</strong></span>`:''}
     ${venda.status==='cancelada'?`<span class="badge-status cancelada">Estornada em ${fmtDH(venda.cancelado_em)}</span>`:''}`
   $('tbody-detalhes-venda').innerHTML = itens.map(i=>`
     <tr>
-      <td>${escHtml(i.nome_produto)}</td>
+      <td>${escHtml(i.nome_produto)} ${i.promo?'<span class="badge-queima">queima</span>':''}</td>
       <td class="ctr">${i.quantidade}</td>
       <td class="num">${fmtMoeda(i.preco_unitario)}</td>
       <td class="num"><strong>${fmtMoeda(i.preco_unitario*i.quantidade)}</strong></td>
@@ -1025,133 +1320,13 @@ async function verDetalhesVenda(id) {
   openModal('modal-detalhes-venda')
 }
 
-/* Comprovante da venda — bobina térmica 80mm */
-async function gerarComprovante(vendaId) {
-  if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
+/* ============================================================
+   CUPOM TÉRMICO 80mm (comprovantes, vale, sangria, fechamento)
+   ============================================================ */
+// Texto sem acento: as fontes padrão do PDF nas impressoras térmicas não têm todos os acentos
+function semAcento(t) { return String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '') }
 
-  const { venda, itens } = await api.detalhesVenda(vendaId)
-  const { jsPDF } = window.jspdf
-
-  const W = 80   // largura da bobina 80mm
-  const m = 5    // margem lateral
-
-  // Altura dinâmica: calcula com base nos itens e linhas de pagamento
-  const alturaItens = itens.reduce((s, i) => s + (i.quantidade > 1 ? 11 : 6), 0)
-  const extras = (venda.desconto > 0 ? 10 : 0) + (venda.valor_recebido != null ? 10 : 0) + (venda.status==='cancelada' ? 10 : 0)
-  const alturaTotal = 98 + alturaItens + extras
-
-  const doc = new jsPDF({ unit: 'mm', format: [W, alturaTotal], orientation: 'portrait' })
-
-  const solidLine = (y) => {
-    doc.setDrawColor(0); doc.setLineWidth(0.4); doc.setLineDash([], 0)
-    doc.line(m, y, W - m, y)
-  }
-  const dashLine = (y) => {
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.setLineDash([1.2, 1.2], 0)
-    doc.line(m, y, W - m, y)
-    doc.setLineDash([], 0)
-  }
-  const linhaValor = (y, label, valor, negrito=false) => {
-    doc.setFont('helvetica', 'normal'); doc.text(label, m, y)
-    doc.setFont('helvetica', negrito ? 'bold' : 'normal'); doc.text(valor, W - m, y, { align: 'right' })
-  }
-
-  let y = 8
-
-  // ── CABEÇALHO ──────────────────────────────────────────
-  doc.setTextColor(0)
-  doc.setFontSize(13); doc.setFont('helvetica', 'bold')
-  doc.text('CANTINHO DO BEBE', W / 2, y, { align: 'center' })
-  y += 5
-
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal')
-  doc.text('Comprovante de Venda', W / 2, y, { align: 'center' })
-  y += 4
-  doc.setFontSize(6.5)
-  doc.text('NAO E DOCUMENTO FISCAL', W / 2, y, { align: 'center' })
-  y += 5
-
-  solidLine(y); y += 5
-
-  if (venda.status === 'cancelada') {
-    doc.setFontSize(10); doc.setFont('helvetica', 'bold')
-    doc.text('*** VENDA ESTORNADA ***', W / 2, y, { align: 'center' })
-    y += 6
-    dashLine(y); y += 4
-  }
-
-  // ── DADOS DA VENDA ──────────────────────────────────────
-  doc.setFontSize(8)
-  linhaValor(y, 'Venda:', `No ${fmtNumVenda(venda.id)}`, true); y += 5
-  linhaValor(y, 'Data/Hora:', fmtDH(venda.criado_em), true);    y += 5
-  linhaValor(y, 'Pagamento:', PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, true)
-  y += 7
-
-  solidLine(y); y += 4
-
-  // ── CABEÇALHO DA TABELA ────────────────────────────────
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold')
-  doc.text('PRODUTO', m, y)
-  doc.text('QTD', W - m - 18, y, { align: 'right' })
-  doc.text('TOTAL', W - m, y, { align: 'right' })
-  y += 3
-
-  dashLine(y); y += 4
-
-  // ── ITENS ───────────────────────────────────────────────
-  itens.forEach(item => {
-    const subtotal = item.preco_unitario * item.quantidade
-    const nomeMax  = 19
-    const nome     = item.nome_produto.length > nomeMax
-      ? item.nome_produto.slice(0, nomeMax) + '..' : item.nome_produto
-
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
-    doc.text(nome, m, y)
-    doc.text(String(item.quantidade), W - m - 18, y, { align: 'right' })
-    doc.setFont('helvetica', 'bold')
-    doc.text(fmtMoeda(subtotal), W - m, y, { align: 'right' })
-    y += 5
-
-    if (item.quantidade > 1) {
-      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
-      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m, y)
-      doc.setTextColor(0)
-      y += 6
-    }
-  })
-
-  dashLine(y); y += 5
-
-  // ── TOTAIS ──────────────────────────────────────────────
-  doc.setFontSize(8)
-  if (venda.desconto > 0) {
-    linhaValor(y, 'Subtotal:', fmtMoeda(venda.subtotal)); y += 5
-    linhaValor(y, 'Desconto:', `- ${fmtMoeda(venda.desconto)}`); y += 5
-  }
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
-  doc.text('TOTAL:', m, y)
-  doc.text(fmtMoeda(venda.total), W - m, y, { align: 'right' })
-  y += 6
-
-  if (venda.valor_recebido != null) {
-    doc.setFontSize(8)
-    linhaValor(y, 'Valor recebido:', fmtMoeda(venda.valor_recebido)); y += 5
-    linhaValor(y, 'Troco:', fmtMoeda(venda.troco), true);             y += 5
-  }
-  y += 2
-
-  solidLine(y); y += 7
-
-  // ── RODAPÉ ──────────────────────────────────────────────
-  doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(60)
-  doc.text('Obrigado pela compra!', W / 2, y, { align: 'center' })
-  y += 5
-  doc.text('Trocas somente com este comprovante.', W / 2, y, { align: 'center' })
-  y += 5
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100)
-  doc.text('Cantinho do Bebe - Sistema PDV', W / 2, y, { align: 'center' })
-
-  // Abre diálogo de impressão direto (sem salvar arquivo)
+function imprimirPDF(doc) {
   const blobUrl = doc.output('bloburl')
   const iframe = document.createElement('iframe')
   iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;'
@@ -1169,7 +1344,97 @@ async function gerarComprovante(vendaId) {
       URL.revokeObjectURL(blobUrl)
     }, 60000)
   }
-  toast('Abrindo impressão...', 'success')
+}
+
+/* montar(c) recebe as funções de desenho; a altura do papel é medida antes de gerar o PDF */
+function cupomTermico(montar, { imprimir = true } = {}) {
+  const { jsPDF } = window.jspdf
+  const W = 80, m = 5
+  const desenhar = (doc) => {
+    let y = 8
+    const fonte = (tam, estilo='normal') => { doc.setFontSize(tam); doc.setFont('helvetica', estilo); doc.setTextColor(0) }
+    const c = {
+      centro(txt, { tam=8, estilo='normal', passo=4.6 } = {}) {
+        fonte(tam, estilo); doc.text(semAcento(txt), W/2, y, { align:'center' }); y += passo
+      },
+      linha(rotulo, valor, { tam=8, negrito=false, passo=5 } = {}) {
+        fonte(tam, 'normal'); doc.text(semAcento(rotulo), m, y)
+        fonte(tam, negrito ? 'bold' : 'normal'); doc.text(semAcento(valor), W-m, y, { align:'right' }); y += passo
+      },
+      item(nome, qtd, valor) {
+        fonte(8); doc.text(semAcento(nome.length>22?nome.slice(0,22)+'..':nome), m, y)
+        doc.text(String(qtd), W-m-20, y, { align:'right' })
+        fonte(8,'bold'); doc.text(semAcento(valor), W-m, y, { align:'right' }); y += 4.6
+      },
+      texto(txt, { tam=7.5, estilo='normal', passo=3.8 } = {}) {
+        fonte(tam, estilo)
+        doc.splitTextToSize(semAcento(txt), W-2*m).forEach(l => { doc.text(l, m, y); y += passo })
+      },
+      solida()    { doc.setLineWidth(0.4); doc.setLineDash([],0); doc.line(m, y, W-m, y); y += 5 },
+      tracejada() { doc.setLineWidth(0.3); doc.setLineDash([1.2,1.2],0); doc.line(m, y, W-m, y); doc.setLineDash([],0); y += 4 },
+      espaco(n=3) { y += n },
+      imagem(url, w, h) { doc.addImage(url, 'PNG', (W-w)/2, y, w, h); y += h + 2 },
+      assinatura(rotulo) { y += 10; doc.setLineWidth(0.3); doc.line(m+8, y, W-m-8, y); y += 4; c.centro(rotulo, { tam:7 }) },
+      cabecalho(titulo) {
+        c.centro('CANTINHO DO BEBE', { tam:13, estilo:'bold', passo:5 })
+        c.centro(titulo, { tam:8, passo:4 })
+      }
+    }
+    montar(c)
+    return y
+  }
+  const altura = desenhar(new jsPDF({ unit:'mm', format:[W, 3000] })) + 6
+  const doc = new jsPDF({ unit:'mm', format:[W, Math.max(altura, 50)], orientation:'portrait' })
+  desenhar(doc)
+  if (imprimir) imprimirPDF(doc)
+  return doc
+}
+
+function barcodePNG(codigo) {
+  const canvas = document.createElement('canvas')
+  JsBarcode(canvas, codigo, { format:'CODE128', width:2, height:60, displayValue:true, fontSize:18, margin:4 })
+  return canvas.toDataURL('image/png')
+}
+
+/* Comprovante da venda */
+async function gerarComprovante(vendaId) {
+  if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
+  const { venda, itens, pagamentos, saldoCliente } = await api.detalhesVenda(vendaId)
+
+  cupomTermico(c => {
+    c.cabecalho('Comprovante de Venda')
+    c.centro('NAO E DOCUMENTO FISCAL', { tam:6.5, passo:5 })
+    c.solida()
+    if (venda.status === 'cancelada') { c.centro('*** VENDA ESTORNADA ***', { tam:10, estilo:'bold', passo:6 }); c.tracejada() }
+    c.linha('Venda:', `No ${fmtNumVenda(venda.id)}`, { negrito:true })
+    c.linha('Data/Hora:', fmtDH(venda.criado_em), { negrito:true })
+    if (venda.cliente_nome) c.linha('Cliente:', venda.cliente_nome, { negrito:true })
+    c.espaco(1); c.solida()
+    c.item('PRODUTO', 'QTD', 'TOTAL'); c.tracejada()
+    itens.forEach(i => {
+      c.item(i.nome_produto, i.quantidade, fmtMoeda(i.preco_unitario * i.quantidade))
+      if (i.quantidade > 1 || i.promo) c.texto(`  ${i.quantidade}x ${fmtMoeda(i.preco_unitario)}${i.promo?' (queima de estoque)':''}`, { tam:7 })
+    })
+    c.tracejada()
+    if (venda.desconto > 0) {
+      c.linha('Subtotal:', fmtMoeda(venda.subtotal))
+      c.linha('Desconto:', `- ${fmtMoeda(venda.desconto)}`)
+    }
+    c.linha('TOTAL:', fmtMoeda(venda.total), { tam:11, negrito:true, passo:6 })
+    pagamentos.forEach(p => c.linha(`${PAGAMENTO_PDF[p.forma]||p.forma}${p.detalhe?` (${p.detalhe})`:''}:`, fmtMoeda(p.valor)))
+    if (venda.valor_recebido != null && venda.troco > 0) {
+      c.linha('Dinheiro recebido:', fmtMoeda(venda.valor_recebido))
+      c.linha('Troco:', fmtMoeda(venda.troco), { negrito:true })
+    }
+    if (pagamentos.some(p => p.forma === 'fiado')) {
+      c.espaco(1); c.tracejada()
+      c.linha('Saldo devedor atual:', fmtMoeda(saldoCliente), { negrito:true })
+      c.assinatura(`Assinatura: ${venda.cliente_nome || 'cliente'}`)
+    }
+    c.espaco(2); c.solida()
+    c.centro('Obrigado pela compra!', { estilo:'italic' })
+    c.centro('Trocas somente com este comprovante.', { estilo:'italic' })
+  })
 }
 
 /* ============================================================
@@ -1562,6 +1827,7 @@ function renderAdminState() {
   } else {
     setTimeout(()=>$('admin-email').focus(), 60)
   }
+  if (secaoAtiva()==='mercadorias') abrirMercadorias()
 }
 
 async function sairAdmin() {
@@ -1929,8 +2195,12 @@ async function init() {
   iniciarRelogio()
   initDateSelectors()
   renderCarrinho()
-  try { await carregarProdutos() } catch(err) { toast(`Erro ao iniciar: ${msgErro(err)}`,'error') }
+  try {
+    await carregarProdutos()
+    await atualizarCaixa()
+  } catch(err) { toast(`Erro ao iniciar: ${msgErro(err)}`,'error') }
   navigateTo('caixa')
 }
 
-init()
+// Espera os outros scripts (caixa, clientes, trocas, mercadorias) carregarem
+document.addEventListener('DOMContentLoaded', init)

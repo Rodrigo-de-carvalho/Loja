@@ -40,6 +40,14 @@
       <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></symbol>
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></symbol>
       <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 14 0"/><path d="M16 4a4 4 0 0 1 0 8"/><path d="M22 21a7 7 0 0 0-4-6.3"/></symbol>
+      <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4"/><path d="M3 8h14"/><path d="M17 20l4-4-4-4"/><path d="M21 16H7"/></symbol>
+      <symbol id="i-truck" viewBox="0 0 24 24"><path d="M1 4h14v12H1z"/><path d="M15 9h4l3 3v4h-7"/><circle cx="5.5" cy="18" r="2"/><circle cx="18.5" cy="18" r="2"/></symbol>
+      <symbol id="i-ticket" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4z"/><path d="M13 6v2M13 11v2M13 16v2"/></symbol>
+      <symbol id="i-minus-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></symbol>
+      <symbol id="i-plus-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></symbol>
+      <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
       <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 7H5a2 2 0 0 1 0-4h13v4"/><path d="M3 5v14a2 2 0 0 0 2 2h15V7"/><circle cx="16" cy="14" r="1.2"/></symbol>
     </defs>
   </svg>
@@ -60,8 +68,17 @@
       <li class="nav-item" data-section="produtos">
         <svg class="ico"><use href="#i-box"/></svg><span>Produtos</span>
       </li>
+      <li class="nav-item" data-section="clientes">
+        <svg class="ico"><use href="#i-users"/></svg><span>Clientes e fiado</span>
+      </li>
+      <li class="nav-item" data-section="trocas">
+        <svg class="ico"><use href="#i-swap"/></svg><span>Trocas</span>
+      </li>
       <li class="nav-item" data-section="etiquetas">
         <svg class="ico"><use href="#i-tag"/></svg><span>Etiquetas</span>
+      </li>
+      <li class="nav-item" data-section="mercadorias">
+        <svg class="ico"><use href="#i-truck"/></svg><span>Mercadorias</span>
       </li>
       <li class="nav-item" data-section="relatorios">
         <svg class="ico"><use href="#i-chart"/></svg><span>Relatórios</span>
@@ -90,11 +107,40 @@
           <span id="pdv-status-text">CAIXA LIVRE</span>
         </div>
         <div class="pdv-venda-num">Venda nº <strong id="num-venda-atual">—</strong></div>
-        <div class="pdv-data" id="data-hoje"></div>
+        <div class="caixa-sessao" id="caixa-sessao"></div>
+        <div class="caixa-acoes" id="caixa-acoes">
+          <button class="btn btn-sm btn-secondary" id="btn-sangria" title="Retirar dinheiro do caixa (ex.: depósito)">
+            <svg class="ico"><use href="#i-minus-circle"/></svg> Sangria
+          </button>
+          <button class="btn btn-sm btn-secondary" id="btn-suprimento" title="Colocar dinheiro no caixa (ex.: troco)">
+            <svg class="ico"><use href="#i-plus-circle"/></svg> Suprimento
+          </button>
+          <button class="btn btn-sm btn-export" id="btn-fechar-caixa">
+            <svg class="ico"><use href="#i-lock"/></svg> Fechar caixa
+          </button>
+        </div>
       </div>
 
-      <div class="pdv-body">
+      <!-- Caixa fechado: pede a abertura antes de vender -->
+      <div class="caixa-fechado" id="caixa-fechado" style="display:none;">
+        <div class="caixa-fechado-card">
+          <div class="admin-lock-icon"><svg class="ico"><use href="#i-unlock"/></svg></div>
+          <h2>Abrir o caixa</h2>
+          <p class="admin-login-sub">Conte o dinheiro que está na gaveta para começar o dia.</p>
+          <div class="form-group">
+            <label>Dinheiro na gaveta (troco inicial)</label>
+            <input type="number" id="abertura-valor" min="0" step="0.01" placeholder="0,00">
+          </div>
+          <div id="abertura-sugestao" class="abertura-sugestao"></div>
+          <button class="btn btn-success btn-block" id="btn-abrir-caixa">
+            <svg class="ico"><use href="#i-unlock"/></svg> Abrir caixa <kbd>Enter</kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="pdv-body" id="pdv-body">
         <div class="pdv-left">
+          <div class="vale-banner" id="vale-banner" style="display:none;"></div>
           <div class="scanner-bar">
             <div class="scanner-input-wrap">
               <svg class="ico scanner-icon"><use href="#i-barcode"/></svg>
@@ -172,7 +218,7 @@
         </aside>
       </div>
 
-      <div class="pdv-shortcuts">
+      <div class="pdv-shortcuts" id="pdv-shortcuts">
         <span><kbd>Enter</kbd> adicionar</span>
         <span><kbd>F2</kbd> buscar produto</span>
         <span><kbd>F4</kbd> desconto</span>
@@ -209,6 +255,7 @@
           <button class="chip active" data-filtro="todos">Todos</button>
           <button class="chip" data-filtro="baixo">Estoque baixo</button>
           <button class="chip" data-filtro="zerado">Sem estoque</button>
+          <button class="chip" data-filtro="queima">Em queima</button>
         </div>
         <span id="contador-produtos" class="badge-count"></span>
       </div>
@@ -226,6 +273,148 @@
           </thead>
           <tbody id="tbody-produtos"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- ==============================
+         CLIENTES E FIADO
+         ============================== -->
+    <section id="section-clientes" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Clientes e fiado</h1>
+          <p class="page-sub">Cadastro de clientes, compras fiado e recebimentos</p>
+        </div>
+        <button class="btn btn-primary" id="btn-novo-cliente">
+          <svg class="ico"><use href="#i-plus"/></svg> Novo cliente
+        </button>
+      </div>
+
+      <div class="stats-grid stats-compact" id="stats-clientes"></div>
+
+      <div class="toolbar">
+        <div class="search-box">
+          <svg class="ico search-icon"><use href="#i-search"/></svg>
+          <input type="text" id="input-busca-cliente" placeholder="Buscar por nome, telefone ou CPF...">
+        </div>
+        <div class="chips" id="filtro-clientes">
+          <button class="chip active" data-filtro="todos">Todos</button>
+          <button class="chip" data-filtro="devendo">Com saldo devedor</button>
+        </div>
+      </div>
+
+      <div class="card table-card">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Telefone</th>
+              <th>Última compra</th>
+              <th style="text-align:right;">Deve</th>
+              <th style="width:280px;">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-clientes"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ==============================
+         TROCAS
+         ============================== -->
+    <section id="section-trocas" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Trocas</h1>
+          <p class="page-sub">Registre as peças devolvidas e gere um vale-troca ou devolva o dinheiro</p>
+        </div>
+      </div>
+
+      <div class="trocas-grid">
+        <div class="card padded-card">
+          <h3 class="card-title"><svg class="ico"><use href="#i-swap"/></svg> Nova troca</h3>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Nº da venda (do comprovante) — opcional</label>
+              <div class="codigo-row">
+                <input type="text" id="troca-venda" placeholder="Ex.: 000123" autocomplete="off">
+                <button class="btn btn-secondary" id="btn-troca-buscar-venda">Buscar</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Cliente — opcional</label>
+              <select id="troca-cliente"></select>
+            </div>
+          </div>
+
+          <div id="troca-venda-info" class="troca-venda-info" style="display:none;"></div>
+
+          <div class="form-group">
+            <label>Peça devolvida</label>
+            <div class="codigo-row">
+              <input type="text" id="troca-scanner" placeholder="Leia o código de barras da peça e tecle Enter" autocomplete="off">
+              <button class="btn btn-secondary" id="btn-troca-buscar-nome"><svg class="ico"><use href="#i-search"/></svg> Buscar</button>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <table class="table">
+              <thead><tr><th>Peça devolvida</th><th style="width:130px;text-align:center;">Qtd</th><th style="text-align:right;">Valor</th><th style="width:44px;"></th></tr></thead>
+              <tbody id="tbody-troca-itens"></tbody>
+            </table>
+            <div class="detalhes-total"><span class="grand" id="troca-total">Total devolvido: R$ 0,00</span></div>
+          </div>
+
+          <div class="form-group">
+            <label>O que o cliente recebe</label>
+            <div class="acerto-grid" id="troca-acerto">
+              <button class="acerto-btn selecionado" data-acerto="vale">
+                <svg class="ico"><use href="#i-ticket"/></svg>
+                <strong>Vale-troca</strong><span>Usa agora ou depois no caixa</span>
+              </button>
+              <button class="acerto-btn" data-acerto="dinheiro">
+                <svg class="ico"><use href="#i-cash"/></svg>
+                <strong>Dinheiro de volta</strong><span>Sai da gaveta do caixa</span>
+              </button>
+              <button class="acerto-btn" data-acerto="pix">
+                <svg class="ico"><use href="#i-pix"/></svg>
+                <strong>PIX de volta</strong><span>Você faz o PIX pelo banco</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Motivo (opcional)</label>
+            <input type="text" id="troca-obs" placeholder="Ex.: tamanho, presente repetido, defeito">
+            <div class="chips chips-sm" id="troca-motivos">
+              <button class="chip" type="button">Tamanho</button>
+              <button class="chip" type="button">Presente repetido</button>
+              <button class="chip" type="button">Defeito</button>
+              <button class="chip" type="button">Não gostou</button>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button class="btn btn-secondary" id="btn-troca-limpar">Limpar</button>
+            <button class="btn btn-success" id="btn-troca-confirmar"><svg class="ico"><use href="#i-check"/></svg> Confirmar troca</button>
+          </div>
+        </div>
+
+        <div class="side-stack">
+          <div class="card side-card">
+            <div class="card-header-row">
+              <h3><svg class="ico"><use href="#i-ticket"/></svg> Vales-troca em aberto</h3>
+            </div>
+            <div id="lista-vales" class="top-lista"></div>
+          </div>
+          <div class="card side-card">
+            <div class="card-header-row">
+              <h3><svg class="ico"><use href="#i-swap"/></svg> Trocas deste mês</h3>
+            </div>
+            <div id="lista-trocas" class="top-lista"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -291,6 +480,116 @@
     </section>
 
     <!-- ==============================
+         MERCADORIAS (entrada e fornecedores — admin)
+         ============================== -->
+    <section id="section-mercadorias" class="section">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Mercadorias</h1>
+          <p class="page-sub">Entrada de mercadoria, custo e fornecedores</p>
+        </div>
+      </div>
+
+      <div id="mercadorias-bloqueio" class="aviso-admin">
+        <svg class="ico"><use href="#i-lock"/></svg>
+        <div>
+          <strong>Área do administrador</strong>
+          <p>A entrada de mercadoria define o preço de custo dos produtos, por isso precisa do login do administrador.</p>
+        </div>
+        <button class="btn btn-primary" id="btn-mercadorias-login">Entrar como administrador</button>
+      </div>
+
+      <div id="mercadorias-painel" style="display:none;">
+        <div class="tabs-bar">
+          <button class="tab-btn active" data-merc-tab="entrada">Nova entrada</button>
+          <button class="tab-btn" data-merc-tab="historico">Entradas anteriores</button>
+          <button class="tab-btn" data-merc-tab="fornecedores">Fornecedores</button>
+        </div>
+
+        <div id="merc-tab-entrada" class="tab-pane active">
+          <div class="card padded-card">
+            <div class="form-row form-row-3">
+              <div class="form-group">
+                <label>Fornecedor</label>
+                <div class="codigo-row">
+                  <select id="entrada-fornecedor"></select>
+                  <button class="btn btn-secondary" id="btn-entrada-novo-fornecedor" title="Cadastrar fornecedor"><svg class="ico"><use href="#i-plus"/></svg></button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Nº da nota / pedido</label>
+                <input type="text" id="entrada-documento" placeholder="Opcional">
+              </div>
+              <div class="form-group">
+                <label>Observação</label>
+                <input type="text" id="entrada-obs" placeholder="Opcional">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Produto que chegou</label>
+              <div class="codigo-row">
+                <input type="text" id="entrada-scanner" placeholder="Leia o código de barras e tecle Enter (produto novo? ele pergunta se quer cadastrar)" autocomplete="off">
+                <button class="btn btn-secondary" id="btn-entrada-buscar"><svg class="ico"><use href="#i-search"/></svg> Buscar</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card table-card" style="margin-top:16px;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th style="text-align:center;">Estoque atual</th>
+                  <th style="width:110px;">Quantidade</th>
+                  <th style="width:140px;">Custo unitário (R$)</th>
+                  <th style="text-align:right;">Preço de venda</th>
+                  <th style="text-align:right;">Margem</th>
+                  <th style="text-align:right;">Subtotal</th>
+                  <th style="width:44px;"></th>
+                </tr>
+              </thead>
+              <tbody id="tbody-entrada"></tbody>
+            </table>
+            <div class="detalhes-total"><span class="grand" id="entrada-total">Total da nota: R$ 0,00</span></div>
+          </div>
+          <div class="acoes-rodape">
+            <label class="check"><input type="checkbox" id="entrada-etiquetas" checked> Preparar etiquetas destas peças depois de salvar</label>
+            <button class="btn btn-secondary" id="btn-entrada-limpar">Limpar</button>
+            <button class="btn btn-success" id="btn-entrada-salvar"><svg class="ico"><use href="#i-check"/></svg> Dar entrada no estoque</button>
+          </div>
+        </div>
+
+        <div id="merc-tab-historico" class="tab-pane">
+          <div class="relatorio-toolbar">
+            <div class="date-picker-group">
+              <select id="merc-sel-mes"></select>
+              <select id="merc-sel-ano"></select>
+              <button class="btn btn-secondary" id="btn-merc-buscar">Buscar</button>
+            </div>
+          </div>
+          <div class="card table-card">
+            <table class="table">
+              <thead><tr><th>Data</th><th>Fornecedor</th><th>Nota / pedido</th><th style="text-align:center;">Peças</th><th style="text-align:right;">Total</th><th></th></tr></thead>
+              <tbody id="tbody-entradas"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="merc-tab-fornecedores" class="tab-pane">
+          <div style="display:flex; justify-content:flex-end; margin-bottom:14px;">
+            <button class="btn btn-primary" id="btn-novo-fornecedor"><svg class="ico"><use href="#i-plus"/></svg> Novo fornecedor</button>
+          </div>
+          <div class="card table-card">
+            <table class="table">
+              <thead><tr><th>Fornecedor</th><th>Telefone</th><th>CNPJ</th><th style="text-align:center;">Entradas</th><th style="text-align:right;">Total comprado</th><th style="width:170px;"></th></tr></thead>
+              <tbody id="tbody-fornecedores"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==============================
          RELATÓRIOS (operador)
          ============================== -->
     <section id="section-relatorios" class="section">
@@ -304,6 +603,7 @@
       <div class="tabs-bar">
         <button class="tab-btn active" data-tab="hoje">Vendas de hoje</button>
         <button class="tab-btn" data-tab="mensal">Histórico mensal</button>
+        <button class="tab-btn" data-tab="caixas">Fechamentos de caixa</button>
       </div>
 
       <!-- Hoje -->
@@ -374,6 +674,33 @@
               <div id="top-produtos-mensal" class="top-lista"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Fechamentos de caixa -->
+      <div id="tab-caixas" class="tab-pane">
+        <div class="relatorio-toolbar">
+          <div class="date-picker-group">
+            <select id="sel-mes-caixas"></select>
+            <select id="sel-ano-caixas"></select>
+            <button class="btn btn-secondary" id="btn-buscar-caixas">Buscar</button>
+          </div>
+        </div>
+        <div class="card table-card">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Abertura</th><th>Fechamento</th>
+                <th style="text-align:right;">Vendas</th>
+                <th style="text-align:right;">Sangrias</th>
+                <th style="text-align:right;">Esperado</th>
+                <th style="text-align:right;">Contado</th>
+                <th style="text-align:right;">Diferença</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tbody-caixas"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -593,6 +920,24 @@
               <p class="barcode-caption" id="barcode-caption-texto">Gerado automaticamente</p>
             </div>
           </div>
+          <div class="promo-box">
+            <label class="check"><input type="checkbox" id="promo-ativa"> <strong>Queima de estoque</strong> — preço especial só para algumas peças</label>
+            <div class="form-row form-row-3" id="promo-campos">
+              <div class="form-group">
+                <label>Preço na queima (R$)</label>
+                <input type="number" id="promo-preco" min="0" step="0.01" placeholder="0,00">
+              </div>
+              <div class="form-group">
+                <label>Quantas peças</label>
+                <input type="number" id="promo-qtd" min="1" step="1">
+              </div>
+              <div class="form-group">
+                <label>Até (opcional)</label>
+                <input type="date" id="promo-ate">
+              </div>
+            </div>
+            <p class="form-hint" id="promo-resumo"></p>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-close="modal-produto">Cancelar</button>
@@ -612,41 +957,90 @@
         <button class="modal-close" data-close="modal-pagamento"><svg class="ico"><use href="#i-x"/></svg></button>
       </div>
       <div class="modal-body pagamento-body">
-        <div class="pagamento-total-row">
-          <span>Total a pagar</span>
-          <strong id="pagamento-total-valor"></strong>
-        </div>
-        <div class="pagamento-grid">
-          <button class="pagamento-btn" data-pag="dinheiro">
-            <kbd>1</kbd><svg class="ico pag-icon"><use href="#i-cash"/></svg><span>Dinheiro</span>
-          </button>
-          <button class="pagamento-btn" data-pag="pix">
-            <kbd>2</kbd><svg class="ico pag-icon"><use href="#i-pix"/></svg><span>PIX</span>
-          </button>
-          <button class="pagamento-btn" data-pag="debito">
-            <kbd>3</kbd><svg class="ico pag-icon"><use href="#i-card"/></svg><span>Débito</span>
-          </button>
-          <button class="pagamento-btn" data-pag="credito">
-            <kbd>4</kbd><svg class="ico pag-icon"><use href="#i-card"/></svg><span>Crédito</span>
-          </button>
+        <div class="pag-topo">
+          <div><span>Total</span><strong id="pagamento-total-valor"></strong></div>
+          <div><span>Pago</span><strong id="pagamento-pago"></strong></div>
+          <div class="pag-falta"><span>Falta</span><strong id="pagamento-falta"></strong></div>
         </div>
 
-        <div class="dinheiro-box" id="dinheiro-box" style="display:none;">
+        <div class="pagamento-grid">
+          <button class="pagamento-btn" data-pag="dinheiro"><kbd>1</kbd><svg class="ico pag-icon"><use href="#i-cash"/></svg><span>Dinheiro</span></button>
+          <button class="pagamento-btn" data-pag="pix"><kbd>2</kbd><svg class="ico pag-icon"><use href="#i-pix"/></svg><span>PIX</span></button>
+          <button class="pagamento-btn" data-pag="debito"><kbd>3</kbd><svg class="ico pag-icon"><use href="#i-card"/></svg><span>Débito</span></button>
+          <button class="pagamento-btn" data-pag="credito"><kbd>4</kbd><svg class="ico pag-icon"><use href="#i-card"/></svg><span>Crédito</span></button>
+          <button class="pagamento-btn" data-pag="fiado"><kbd>5</kbd><svg class="ico pag-icon"><use href="#i-user"/></svg><span>Fiado</span></button>
+          <button class="pagamento-btn" data-pag="vale"><kbd>6</kbd><svg class="ico pag-icon"><use href="#i-ticket"/></svg><span>Vale-troca</span></button>
+        </div>
+
+        <!-- Dinheiro -->
+        <div class="pag-painel" data-painel="dinheiro">
           <div class="form-group">
-            <label>Valor recebido (R$)</label>
+            <label>Valor recebido em dinheiro (deixe vazio se for o valor exato)</label>
             <input type="number" id="valor-recebido" min="0" step="0.01" placeholder="0,00">
           </div>
           <div class="notas-rapidas" id="notas-rapidas"></div>
-          <div class="troco-row">
-            <span>Troco</span>
-            <strong id="troco-valor">R$ 0,00</strong>
+          <div class="troco-row"><span>Troco</span><strong id="troco-valor">R$ 0,00</strong></div>
+        </div>
+
+        <!-- PIX / cartão (maquininha) -->
+        <div class="pag-painel" data-painel="cartao">
+          <div class="maquininha-aviso">
+            <svg class="ico"><use href="#i-card"/></svg>
+            <div>Passe <strong id="maquininha-valor">R$ 0,00</strong> na maquininha <span id="maquininha-forma"></span> e confirme aqui quando aprovar.</div>
+          </div>
+          <div class="form-row form-row-3">
+            <div class="form-group">
+              <label>Valor</label>
+              <input type="number" id="valor-cartao" min="0" step="0.01">
+            </div>
+            <div class="form-group" id="grupo-parcelas">
+              <label>Parcelas</label>
+              <select id="pag-parcelas"></select>
+            </div>
+            <div class="form-group">
+              <label>Cód. autorização (opcional)</label>
+              <input type="text" id="pag-autorizacao" placeholder="Do comprovante" autocomplete="off">
+            </div>
           </div>
         </div>
+
+        <!-- Fiado -->
+        <div class="pag-painel" data-painel="fiado">
+          <div class="form-group">
+            <label>Cliente</label>
+            <div class="codigo-row">
+              <input type="text" id="fiado-busca" placeholder="Digite o nome ou telefone" autocomplete="off">
+              <button class="btn btn-secondary" id="btn-fiado-novo-cliente"><svg class="ico"><use href="#i-plus"/></svg> Novo</button>
+            </div>
+          </div>
+          <div class="fiado-lista" id="fiado-lista"></div>
+          <div class="form-group">
+            <label>Valor no fiado</label>
+            <input type="number" id="valor-fiado" min="0" step="0.01">
+          </div>
+        </div>
+
+        <!-- Vale-troca -->
+        <div class="pag-painel" data-painel="vale">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Código do vale-troca</label>
+              <input type="text" id="vale-codigo" placeholder="Leia ou digite (ex.: VT123456)" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label>Valor a usar</label>
+              <input type="number" id="valor-vale" min="0" step="0.01">
+            </div>
+          </div>
+          <div id="vale-info" class="vale-info"></div>
+        </div>
+
+        <div class="pag-lancados" id="pag-lancados"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close="modal-pagamento">Voltar <kbd>Esc</kbd></button>
         <button class="btn btn-success" id="btn-confirmar-pagamento" disabled>
-          <svg class="ico"><use href="#i-check"/></svg> Confirmar <kbd>Enter</kbd>
+          <svg class="ico"><use href="#i-check"/></svg> <span id="btn-confirmar-texto">Confirmar</span> <kbd>Enter</kbd>
         </button>
       </div>
     </div>
@@ -758,6 +1152,7 @@
       <div class="modal-body venda-ok-body">
         <div class="venda-ok-linha"><span>Total</span><strong id="venda-ok-total"></strong></div>
         <div class="venda-ok-linha"><span>Pagamento</span><strong id="venda-ok-pagamento"></strong></div>
+        <div class="venda-ok-fiado" id="venda-ok-fiado" style="display:none;"></div>
         <div class="venda-ok-troco" id="venda-ok-troco-box">
           <span>Troco</span>
           <strong id="venda-ok-troco"></strong>
@@ -813,12 +1208,259 @@
             <tr><td><kbd>Del</kbd></td><td>Tirar o último item lançado</td></tr>
             <tr><td><kbd>F8</kbd></td><td>Cancelar a venda atual</td></tr>
             <tr><td><kbd>F10</kbd></td><td>Finalizar venda (pagamento)</td></tr>
-            <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>Escolher forma de pagamento</td></tr>
+            <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>Escolher forma de pagamento</td></tr>
             <tr><td><kbd>3*código</kbd></td><td>Lançar 3 unidades do produto</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Fechar janela aberta</td></tr>
             <tr><td><kbd>F11</kbd></td><td>Tela cheia</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: SANGRIA / SUPRIMENTO
+       ================================ -->
+  <div class="modal-overlay" id="modal-movimento">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 id="movimento-titulo">Sangria</h2>
+        <button class="modal-close" data-close="modal-movimento"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" id="movimento-dica"></p>
+        <div class="form-group">
+          <label>Valor (R$)</label>
+          <input type="number" id="movimento-valor" min="0" step="0.01" placeholder="0,00">
+        </div>
+        <div class="form-group">
+          <label>Motivo</label>
+          <input type="text" id="movimento-motivo" placeholder="Ex.: depósito no banco">
+          <div class="chips chips-sm" id="movimento-motivos"></div>
+        </div>
+        <label class="check"><input type="checkbox" id="movimento-imprimir" checked> Imprimir comprovante</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-movimento">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-movimento">Confirmar <kbd>Enter</kbd></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: FECHAR CAIXA
+       ================================ -->
+  <div class="modal-overlay" id="modal-fechar-caixa">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>Fechar o caixa</h2>
+        <button class="modal-close" data-close="modal-fechar-caixa"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="fechamento-grid">
+          <div>
+            <h3 class="bloco-titulo">Dinheiro na gaveta</h3>
+            <div id="fechamento-dinheiro" class="conta-lista"></div>
+          </div>
+          <div>
+            <h3 class="bloco-titulo">Confira com a maquininha</h3>
+            <div id="fechamento-outros" class="conta-lista"></div>
+          </div>
+        </div>
+        <div class="contagem-box">
+          <div class="form-group">
+            <label>Quanto tem de dinheiro na gaveta agora? (conte as notas e moedas)</label>
+            <input type="number" id="fechamento-contado" min="0" step="0.01" placeholder="0,00">
+          </div>
+          <div class="troco-row" id="fechamento-diferenca"><span>Diferença</span><strong>—</strong></div>
+        </div>
+        <div class="form-group">
+          <label>Observação (opcional)</label>
+          <input type="text" id="fechamento-obs" placeholder="Ex.: deixei R$ 100 de troco para amanhã">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-fechar-caixa">Cancelar</button>
+        <button class="btn btn-export" id="btn-confirmar-fechamento"><svg class="ico"><use href="#i-lock"/></svg> Fechar caixa e imprimir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: CLIENTE (cadastro)
+       ================================ -->
+  <div class="modal-overlay" id="modal-cliente">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="cliente-titulo">Novo cliente</h2>
+        <button class="modal-close" data-close="modal-cliente"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Nome <span class="required">*</span></label>
+          <input type="text" id="cliente-nome" placeholder="Nome completo">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Telefone / WhatsApp</label>
+            <input type="text" id="cliente-telefone" placeholder="(00) 00000-0000">
+          </div>
+          <div class="form-group">
+            <label>CPF</label>
+            <input type="text" id="cliente-cpf" placeholder="Opcional">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Endereço</label>
+          <input type="text" id="cliente-endereco" placeholder="Opcional">
+        </div>
+        <div class="form-group">
+          <label>Observação</label>
+          <input type="text" id="cliente-obs" placeholder="Ex.: paga todo dia 10">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-cliente">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-cliente">Salvar cliente</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: FICHA DO CLIENTE
+       ================================ -->
+  <div class="modal-overlay" id="modal-ficha">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2 id="ficha-titulo">Ficha do cliente</h2>
+        <button class="modal-close" data-close="modal-ficha"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="ficha-topo">
+          <div id="ficha-dados" class="ficha-dados"></div>
+          <div class="ficha-saldo">
+            <span>Saldo devedor</span>
+            <strong id="ficha-saldo">R$ 0,00</strong>
+          </div>
+        </div>
+        <div id="ficha-vales"></div>
+        <div class="card table-card" style="max-height:340px; overflow-y:auto;">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Lançamento</th><th style="text-align:right;">Valor</th><th style="text-align:right;">Saldo</th></tr></thead>
+            <tbody id="tbody-ficha"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-ficha-imprimir"><svg class="ico"><use href="#i-printer"/></svg> Imprimir extrato</button>
+        <button class="btn btn-success" id="btn-ficha-receber"><svg class="ico"><use href="#i-cash"/></svg> Receber pagamento</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: RECEBER PAGAMENTO DO FIADO
+       ================================ -->
+  <div class="modal-overlay" id="modal-receber">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Receber pagamento</h2>
+        <button class="modal-close" data-close="modal-receber"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <p id="receber-cliente" style="font-weight:600;"></p>
+        <div class="form-group">
+          <label>Valor recebido (R$)</label>
+          <input type="number" id="receber-valor" min="0" step="0.01">
+        </div>
+        <div class="segmented" id="receber-forma">
+          <button class="seg active" data-forma="dinheiro">Dinheiro</button>
+          <button class="seg" data-forma="pix">PIX</button>
+          <button class="seg" data-forma="debito">Débito</button>
+          <button class="seg" data-forma="credito">Crédito</button>
+        </div>
+        <div class="form-group">
+          <label>Observação</label>
+          <input type="text" id="receber-obs" placeholder="Opcional">
+        </div>
+        <label class="check"><input type="checkbox" id="receber-imprimir" checked> Imprimir comprovante para o cliente</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-receber">Cancelar</button>
+        <button class="btn btn-success" id="btn-confirmar-receber">Confirmar <kbd>Enter</kbd></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: VALE-TROCA GERADO
+       ================================ -->
+  <div class="modal-overlay" id="modal-vale">
+    <div class="modal modal-sm">
+      <div class="venda-ok-hero">
+        <div class="venda-ok-check"><svg class="ico"><use href="#i-ticket"/></svg></div>
+        <h2>Vale-troca gerado</h2>
+        <p id="vale-gerado-cliente"></p>
+      </div>
+      <div class="modal-body venda-ok-body" style="align-items:center;">
+        <svg id="vale-gerado-barcode"></svg>
+        <div class="venda-ok-linha" style="width:100%;"><span>Valor do vale</span><strong id="vale-gerado-valor"></strong></div>
+      </div>
+      <div class="modal-footer" style="justify-content:center;">
+        <button class="btn btn-secondary" id="btn-vale-imprimir"><svg class="ico"><use href="#i-printer"/></svg> Imprimir vale</button>
+        <button class="btn btn-primary" id="btn-vale-usar">Usar agora no caixa</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: FORNECEDOR
+       ================================ -->
+  <div class="modal-overlay" id="modal-fornecedor">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="fornecedor-titulo">Novo fornecedor</h2>
+        <button class="modal-close" data-close="modal-fornecedor"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Nome <span class="required">*</span></label>
+          <input type="text" id="fornecedor-nome" placeholder="Ex.: Malharia Exemplo">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Telefone</label>
+            <input type="text" id="fornecedor-telefone">
+          </div>
+          <div class="form-group">
+            <label>CNPJ</label>
+            <input type="text" id="fornecedor-cnpj">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Observação</label>
+          <input type="text" id="fornecedor-obs" placeholder="Ex.: representante, prazo de entrega">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close="modal-fornecedor">Cancelar</button>
+        <button class="btn btn-primary" id="btn-salvar-fornecedor">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================
+       MODAL: DETALHES (entrada, troca, fechamento)
+       ================================ -->
+  <div class="modal-overlay" id="modal-info">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2 id="info-titulo"></h2>
+        <button class="modal-close" data-close="modal-info"><svg class="ico"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body" id="info-corpo"></div>
+      <div class="modal-footer" id="info-rodape">
+        <button class="btn btn-secondary" data-close="modal-info">Fechar</button>
       </div>
     </div>
   </div>
@@ -833,5 +1475,9 @@
   <script src="../node_modules/jsbarcode/dist/JsBarcode.all.min.js"></script>
   <script src="../node_modules/jspdf/dist/jspdf.umd.min.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/caixa.js"></script>
+  <script src="js/clientes.js"></script>
+  <script src="js/trocas.js"></script>
+  <script src="js/mercadorias.js"></script>
 </body>
 </html>

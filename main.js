@@ -97,6 +97,7 @@ function registrarHandlers() {
   ipcMain.handle('produtos:atualizar',       (_, id, d)   => db.atualizarProduto(id, d))
   ipcMain.handle('produtos:deletar',         (_, id)      => db.deletarProduto(id))
   ipcMain.handle('produtos:buscarPorCodigo', (_, c)       => db.buscarPorCodigo(c))
+  ipcMain.handle('produtos:promocao',        (_, id, p)   => db.definirPromocao(id, p))
 
   /* Admin — a sessão fica no processo principal, não na tela */
   ipcMain.handle('admin:login', (_, email, senha) => {
@@ -130,6 +131,37 @@ function registrarHandlers() {
   ipcMain.handle('vendas:mensais',       (_, m, a) => db.vendasMensais(m, a))
   ipcMain.handle('vendas:maisVendidos',  (_, m, a) => db.maisVendidos(m, a))
   ipcMain.handle('vendas:detalhes',      (_, id)   => db.detalhesVenda(id))
+
+  /* Caixa */
+  ipcMain.handle('caixa:atual',      ()                => db.caixaAtual())
+  ipcMain.handle('caixa:abrir',      (_, v)            => db.abrirCaixa(v))
+  ipcMain.handle('caixa:movimentar', (_, tipo, v, mot) => db.movimentarCaixa(tipo, v, mot))
+  ipcMain.handle('caixa:fechar',     (_, v, obs)       => db.fecharCaixa(v, obs))
+  ipcMain.handle('caixa:resumo',     (_, id)           => db.resumoCaixa(id))
+  ipcMain.handle('caixa:listar',     (_, m, a)         => db.listarCaixas(m, a))
+
+  /* Clientes e fiado */
+  ipcMain.handle('clientes:listar',   ()     => db.listarClientes())
+  ipcMain.handle('clientes:salvar',   (_, d) => db.salvarCliente(d))
+  ipcMain.handle('clientes:excluir',  (_, id)=> db.excluirCliente(id))
+  ipcMain.handle('clientes:extrato',  (_, id)=> db.extratoCliente(id))
+  ipcMain.handle('clientes:receber',  (_, d) => db.receberPagamentoCliente(d))
+
+  /* Trocas e vales */
+  ipcMain.handle('trocas:itensVenda', (_, id)   => db.itensParaTroca(id))
+  ipcMain.handle('trocas:registrar',  (_, d)    => db.registrarTroca(d))
+  ipcMain.handle('trocas:listar',     (_, m, a) => db.listarTrocas(m, a))
+  ipcMain.handle('trocas:detalhes',   (_, id)   => db.detalhesTroca(id))
+  ipcMain.handle('vales:buscar',      (_, c)    => db.buscarVale(c))
+  ipcMain.handle('vales:listar',      ()        => db.listarVales())
+
+  /* Fornecedores e entrada de mercadoria — definem custo, por isso só o administrador */
+  ipcMain.handle('fornecedores:listar',  somenteAdmin(()       => db.listarFornecedores()))
+  ipcMain.handle('fornecedores:salvar',  somenteAdmin((_, d)   => db.salvarFornecedor(d)))
+  ipcMain.handle('fornecedores:excluir', somenteAdmin((_, id)  => db.excluirFornecedor(id)))
+  ipcMain.handle('entradas:registrar',   somenteAdmin((_, d)   => db.registrarEntrada(d)))
+  ipcMain.handle('entradas:listar',      somenteAdmin((_, m, a)=> db.listarEntradas(m, a)))
+  ipcMain.handle('entradas:detalhes',    somenteAdmin((_, id)  => db.detalhesEntrada(id)))
 }
 
 app.whenReady().then(() => {

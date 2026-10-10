@@ -1715,3 +1715,315 @@ code {
   .etiqueta-preco { font-size: 13pt; font-weight: 800; color: #000; }
   .etiqueta svg   { max-width: 80mm; }
 }
+
+/* ============================================================
+   CAIXA — ABERTURA, SANGRIA, FECHAMENTO
+   ============================================================ */
+.caixa-sessao {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.caixa-sessao.atrasado { color: var(--danger); font-weight: 700; }
+.caixa-sessao .ico { width: 15px; height: 15px; }
+
+.caixa-acoes { display: flex; gap: 6px; }
+
+.caixa-fechado {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
+.caixa-fechado-card {
+  width: 420px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 34px 32px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.caixa-fechado-card h2 { text-align: center; font-size: 22px; }
+.caixa-fechado-card input { font-size: 22px; font-weight: 700; text-align: center; }
+
+.abertura-sugestao { font-size: 13px; color: var(--text-muted); text-align: center; }
+.abertura-sugestao .link-btn { font-size: 13px; }
+
+.vale-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--warning-light);
+  color: #92400e;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.vale-banner .link-btn { margin-left: auto; color: #92400e; }
+
+.fechamento-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.bloco-titulo { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+
+.conta-lista { border: 1px solid var(--border); border-radius: 12px; padding: 4px 14px; }
+.conta-linha {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+.conta-linha:last-child { border-bottom: none; }
+.conta-linha.menos strong { color: var(--danger); }
+.conta-linha.total { font-weight: 800; font-size: 15px; border-top: 2px solid var(--border); border-bottom: none; }
+.conta-linha small { color: var(--text-light); font-weight: 400; }
+
+.contagem-box {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: end;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.contagem-box input { font-size: 20px; font-weight: 700; }
+.troco-row.neutro { background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); }
+
+.diferenca-pos { color: var(--success); font-weight: 700; }
+.diferenca-neg { color: var(--danger); font-weight: 700; }
+
+/* ============================================================
+   PAGAMENTO DIVIDIDO
+   ============================================================ */
+.modal-pagamento { width: 640px; }
+
+.pag-topo {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 10px;
+}
+.pag-topo > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.pag-topo span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.pag-topo strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.pag-topo > div:first-child { background: var(--primary-light); border-color: #d9cbfb; }
+.pag-topo > div:first-child strong { font-size: 26px; color: var(--primary-dark); }
+.pag-topo .pag-falta strong { color: var(--danger); }
+.pag-topo .pag-falta.quitado strong { color: var(--success); }
+
+.pagamento-grid { grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.pagamento-grid .pagamento-btn { padding: 18px 4px 12px; font-size: 13px; }
+.pagamento-grid .pag-icon { width: 26px; height: 26px; }
+
+.pag-painel {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.pag-painel.ativo { display: flex; }
+.pag-painel input { font-size: 18px; font-weight: 700; }
+
+.maquininha-aviso {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: 14px;
+}
+.maquininha-aviso strong { font-size: 18px; }
+.maquininha-aviso .ico { width: 26px; height: 26px; }
+
+.fiado-lista { display: flex; flex-direction: column; gap: 6px; max-height: 170px; overflow-y: auto; }
+.fiado-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.fiado-item:hover { border-color: var(--primary-mid); }
+.fiado-item.selecionado { border-color: var(--primary); background: var(--primary-light); }
+.fiado-item small { color: var(--text-muted); }
+
+.vale-info { font-size: 13.5px; }
+
+.pag-lancados { display: flex; flex-direction: column; gap: 6px; }
+.pag-lancado {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--success-light);
+  color: var(--success-dark);
+  font-weight: 600;
+}
+.pag-lancado .ico { width: 16px; height: 16px; }
+.pag-lancado small { font-weight: 400; opacity: 0.8; }
+.pag-lancado strong { margin-left: auto; font-variant-numeric: tabular-nums; }
+.pag-lancado button { background: none; border: none; color: inherit; cursor: pointer; display: grid; place-items: center; }
+
+.venda-ok-fiado {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   CLIENTES / TROCAS / MERCADORIAS
+   ============================================================ */
+.saldo-devedor { color: var(--danger); font-weight: 800; font-variant-numeric: tabular-nums; }
+.saldo-zero    { color: var(--text-light); }
+.cliente-nome small { display: block; color: var(--text-light); font-size: 12px; font-weight: 400; }
+
+.ficha-topo { display: flex; gap: 16px; align-items: stretch; }
+.ficha-dados { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; align-content: flex-start; }
+.ficha-saldo {
+  min-width: 200px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--danger-light);
+  color: #991b1b;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.ficha-saldo span { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.ficha-saldo strong { font-size: 28px; font-variant-numeric: tabular-nums; }
+.ficha-saldo.zerado { background: var(--success-light); color: var(--success-dark); }
+
+.mov-compra   { color: var(--danger); font-weight: 700; }
+.mov-pagamento{ color: var(--success); font-weight: 700; }
+
+.trocas-grid { display: grid; grid-template-columns: 1fr 340px; gap: 18px; align-items: start; }
+
+.troca-venda-info {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 13.5px;
+}
+.troca-venda-info .itens-venda { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.acerto-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.acerto-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+}
+.acerto-btn .ico { width: 22px; height: 22px; color: var(--primary); }
+.acerto-btn span { font-size: 12px; color: var(--text-muted); }
+.acerto-btn.selecionado { border-color: var(--primary); background: var(--primary-light); }
+
+.chips-sm { flex-wrap: wrap; margin-top: 6px; }
+.chips-sm .chip { padding: 4px 11px; font-size: 12px; }
+
+.lista-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+}
+.lista-item:last-child { border-bottom: none; }
+.lista-item small { color: var(--text-light); }
+.lista-item .acoes-mini { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 4px; }
+
+.aviso-admin {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 22px 24px;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.aviso-admin > .ico { width: 34px; height: 34px; color: var(--primary); }
+.aviso-admin div { flex: 1; }
+.aviso-admin p { color: var(--text-muted); font-size: 13.5px; margin-top: 2px; }
+
+.form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+.codigo-row select { flex: 1; min-width: 0; padding: 10px 13px; border: 1px solid var(--border-dark); border-radius: var(--radius); font: inherit; background: var(--surface); }
+
+.acoes-rodape { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 16px; }
+.acoes-rodape .check { margin-right: auto; }
+
+.check { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+/* Queima de estoque */
+.promo-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed #f5c88b;
+  border-radius: 12px;
+  background: #fffbeb;
+}
+.badge-queima {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #ffedd5;
+  color: #9a3412;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.preco-de { text-decoration: line-through; color: var(--text-light); font-size: 12px; margin-right: 4px; }
+
+.etiqueta-de { font-size: 10px; color: #6b6785; text-decoration: line-through; }
+@media print { .etiqueta-de { font-size: 8pt; color: #000; } }
+.pdv-status.fechado { background: var(--danger-light); color: #991b1b; }
+.pdv-status.fechado .status-dot { box-shadow: 0 0 0 3px rgba(220,38,38,0.2); }
+.table-cupom td.num { white-space: nowrap; }
+.table-cupom .preco-de { display: block; margin: 0; }
+.codigo-row input::placeholder { font-family: 'Segoe UI', sans-serif; }
+.codigo-row input { font-family: inherit; }
+#produto-codigo, #troca-scanner, #entrada-scanner, #vale-codigo { font-family: var(--mono); }
