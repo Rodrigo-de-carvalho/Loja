@@ -1217,6 +1217,7 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn=>{
     if(btn.dataset.tab==='hoje')   carregarHoje()
     if(btn.dataset.tab==='mensal') carregarMensal()
     if(btn.dataset.tab==='caixas') carregarCaixas()
+    if(btn.dataset.tab==='anual')  carregarAnual()
   })
 })
 
@@ -1228,7 +1229,7 @@ function initDateSelectors() {
   const anoOpts = anos.map(a=>`<option value="${a}"${a===anoA?' selected':''}>${a}</option>`).join('')
 
   ;['sel-mes-mensal','admin-sel-mes-lucro','admin-sel-mes-estornos','sel-mes-caixas','merc-sel-mes'].forEach(id=>{ $(id).innerHTML=mesOpts })
-  ;['sel-ano-mensal','admin-sel-ano-lucro','admin-sel-ano-estornos','sel-ano-caixas','merc-sel-ano'].forEach(id=>{ $(id).innerHTML=anoOpts })
+  ;['sel-ano-mensal','admin-sel-ano-lucro','admin-sel-ano-estornos','sel-ano-caixas','merc-sel-ano','sel-ano-anual'].forEach(id=>{ $(id).innerHTML=anoOpts })
 }
 
 function statsVendas(totais) {
@@ -1299,6 +1300,81 @@ $('btn-buscar-mensal').addEventListener('click', carregarMensal)
 ;['tbody-hoje','tbody-mensal'].forEach(id => $(id).addEventListener('click', e=>{
   const b = e.target.closest('[data-ver]'); if (b) verDetalhesVenda(Number(b.dataset.ver))
 }))
+
+/* ============================================================
+   FATURAMENTO DO ANO (MEI)
+   ============================================================ */
+// Limite anual do MEI: confira o valor em vigor no Portal do Empreendedor
+const LIMITE_MEI_PADRAO = 81000
+function limiteMei() {
+  try { const v = parseFloat(localStorage.getItem('limiteMei')); return v > 0 ? v : LIMITE_MEI_PADRAO }
+  catch(e) { return LIMITE_MEI_PADRAO }
+}
+
+async function carregarAnual() {
+  const ano = parseInt($('sel-ano-anual').value)
+  const dados = await api.faturamentoAnual(ano)
+  const limite = limiteMei()
+  const pct = limite > 0 ? (dados.total / limite) * 100 : 0
+  const nivel = pct >= 100 ? 'estourou' : pct >= 80 ? 'alerta' : 'ok'
+  const anoAtual = ano === new Date().getFullYear()
+  const aviso = nivel === 'estourou'
+    ? `O faturamento passou do limite do MEI. Converse com o contador o quanto antes.`
+    : nivel === 'alerta'
+      ? `Atenção: já foram ${fmtPct(pct)} do limite do MEI. Faltam ${fmtMoeda(limite - dados.total)}.`
+      : `${anoAtual ? 'Ainda faltam' : 'Ficaram'} ${fmtMoeda(limite - dados.total)} para o limite do MEI.`
+  $('mei-card').innerHTML = `
+    <div class="mei-topo">
+      <div>
+        <span class="stat-label">Faturamento de ${ano}</span>
+        <div class="mei-total">${fmtMoeda(dados.total)}</div>
+      </div>
+      <div class="mei-limite">
+        Limite anual do MEI<br>
+        <input type="number" id="mei-limite-input" min="0" step="0.01" value="${limite}" title="Confira o valor em vigor no Portal do Empreendedor">
+      </div>
+    </div>
+    <div class="mei-barra ${nivel}"><span style="width:${Math.min(pct,100).toFixed(1)}%"></span></div>
+    <div class="mei-aviso ${nivel}">${aviso}</div>
+    <p class="form-hint">Este é o valor para a declaração anual do MEI (DASN-SIMEI): soma das vendas do ano, já descontadas as devoluções de trocas e as vendas estornadas. Vendas no fiado contam no mês em que foram feitas.</p>`
+  $('tbody-anual').innerHTML = dados.meses.map(m => `<tr>
+      <td>${MESES_PT[m.mes]}</td>
+      <td class="num">${fmtMoeda(m.vendas)}</td>
+      <td class="num">${m.devolucoes ? `− ${fmtMoeda(m.devolucoes)}` : '—'}</td>
+      <td class="num"><strong>${fmtMoeda(m.total)}</strong></td>
+    </tr>`).join('') + `<tr><td><strong>Total</strong></td><td></td><td></td><td class="num"><strong>${fmtMoeda(dados.total)}</strong></td></tr>`
+}
+$('btn-buscar-anual').addEventListener('click', carregarAnual)
+
+$('mei-card').addEventListener('change', e => {
+  if (e.target.id !== 'mei-limite-input') return
+  const v = parseFloat(e.target.value)
+  if (!(v > 0)) { toast('Limite inválido.', 'error'); return }
+  try { localStorage.setItem('limiteMei', String(v)) } catch(err) { /* sem armazenamento: vale só agora */ }
+  carregarAnual()
+})
+
+$('btn-export-anual').addEventListener('click', async () => {
+  const ano = parseInt($('sel-ano-anual').value)
+  const dados = await api.faturamentoAnual(ano)
+  const doc = _novoPDF()
+  let y = _pdfHeader(doc, `Faturamento de ${ano} (MEI)`, 'Base para a declaração anual DASN-SIMEI')
+  y = _pdfCards(doc, y, [
+    { label: 'Faturamento do ano', value: fmtMoeda(dados.total), color: 'green' },
+    { label: 'Limite do MEI',      value: fmtMoeda(limiteMei()), color: 'gray' },
+    { label: 'Uso do limite',      value: fmtPct(dados.total / limiteMei() * 100), color: dados.total > limiteMei() ? 'red' : 'purple' },
+  ])
+  y = _pdfTable(doc, y, {
+    headers:   ['Mês', 'Vendas (R$)', 'Devoluções (R$)', 'Faturamento (R$)'],
+    colWidths: [56, 42, 42, 42],
+    aligns:    ['left', 'right', 'right', 'right'],
+    rows: dados.meses.map(m => [MESES_PT[m.mes], fmtMoeda(m.vendas), m.devolucoes ? `- ${fmtMoeda(m.devolucoes)}` : '-', fmtMoeda(m.total)])
+  })
+  _pdfTotalRow(doc, y - 5, `TOTAL DE ${ano}`, fmtMoeda(dados.total))
+  _pdfFooter(doc)
+  doc.save(`faturamento-${ano}-mei.pdf`)
+  toast('PDF exportado com sucesso!', 'success')
+})
 
 /* Detalhes venda */
 async function verDetalhesVenda(id) {

@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   vendasHoje:         ()     => ipcRenderer.invoke('vendas:hoje'),
   vendasMensais:      (m, a) => ipcRenderer.invoke('vendas:mensais', m, a),
   maisVendidos:       (m, a) => ipcRenderer.invoke('vendas:maisVendidos', m, a),
+  faturamentoAnual:   (a)    => ipcRenderer.invoke('vendas:faturamentoAnual', a),
   detalhesVenda:      (id)   => ipcRenderer.invoke('vendas:detalhes', id),
 
   /* Caixa */

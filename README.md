@@ -17,7 +17,7 @@ Sistema de Ponto de Venda (PDV) completo para loja de roupas de bebê, desenvolv
 | **Mercadorias** | Entrada de mercadoria por fornecedor, atualizando estoque e preço de custo, com etiquetas prontas para imprimir |
 | **Produtos** | Cadastro com código de barras gerado ou lido da etiqueta do fornecedor (EAN), filtros de estoque |
 | **Etiquetas** | Impressão de etiquetas com código de barras e preço ("de/por" na queima) |
-| **Relatórios** | Vendas do dia, histórico mensal, fechamentos de caixa, conferência por forma de pagamento, mais vendidos, PDF |
+| **Relatórios** | Vendas do dia, histórico mensal, fechamentos de caixa, conferência por forma de pagamento, mais vendidos, faturamento do ano com aviso de limite do MEI (base para a DASN-SIMEI), PDF |
 | **Administrador** | Preço de custo, estoque, lucro mensal (já descontando trocas), estorno, troca de senha e backup |
 
 ### Maquininha de cartão

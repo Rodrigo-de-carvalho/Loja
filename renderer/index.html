@@ -606,6 +606,7 @@
         <button class="tab-btn active" data-tab="hoje">Vendas de hoje</button>
         <button class="tab-btn" data-tab="mensal">Histórico mensal</button>
         <button class="tab-btn" data-tab="caixas">Fechamentos de caixa</button>
+        <button class="tab-btn" data-tab="anual">Faturamento do ano (MEI)</button>
       </div>
 
       <!-- Hoje -->
@@ -676,6 +677,26 @@
               <div id="top-produtos-mensal" class="top-lista"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Faturamento do ano (MEI) -->
+      <div id="tab-anual" class="tab-pane">
+        <div class="relatorio-toolbar">
+          <div class="date-picker-group">
+            <select id="sel-ano-anual"></select>
+            <button class="btn btn-secondary" id="btn-buscar-anual">Buscar</button>
+          </div>
+          <button class="btn btn-export" id="btn-export-anual">
+            <svg class="ico"><use href="#i-file"/></svg> Exportar PDF
+          </button>
+        </div>
+        <div class="card padded-card mei-card" id="mei-card"></div>
+        <div class="card table-card" style="margin-top:16px;">
+          <table class="table">
+            <thead><tr><th>Mês</th><th style="text-align:right;">Vendas</th><th style="text-align:right;">Devoluções (trocas)</th><th style="text-align:right;">Faturamento</th></tr></thead>
+            <tbody id="tbody-anual"></tbody>
+          </table>
         </div>
       </div>
 

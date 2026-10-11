@@ -663,6 +663,22 @@ class Database {
     `).all(...periodoMes(mes, ano), limite)
   }
 
+  /** Faturamento do ano para o MEI: vendas concluídas menos as devoluções das trocas, mês a mês. */
+  faturamentoAnual(ano) {
+    const a = String(ano)
+    const meses = Array.from({ length: 12 }, (_, i) => ({ mes: i + 1, vendas: 0, devolucoes: 0 }))
+    this.db.prepare(`
+      SELECT CAST(strftime('%m', criado_em) AS INTEGER) AS mes, COALESCE(SUM(total),0) AS v
+      FROM vendas WHERE status = 'concluida' AND strftime('%Y', criado_em) = ? GROUP BY mes
+    `).all(a).forEach(r => { meses[r.mes - 1].vendas = round2(r.v) })
+    this.db.prepare(`
+      SELECT CAST(strftime('%m', criado_em) AS INTEGER) AS mes, COALESCE(SUM(valor_total),0) AS v
+      FROM trocas WHERE strftime('%Y', criado_em) = ? GROUP BY mes
+    `).all(a).forEach(r => { meses[r.mes - 1].devolucoes = round2(r.v) })
+    meses.forEach(m => { m.total = round2(m.vendas - m.devolucoes) })
+    return { ano: Number(ano), meses, total: round2(meses.reduce((s, m) => s + m.total, 0)) }
+  }
+
   lucroMensal(mes, ano) {
     const params = periodoMes(mes, ano)
     // fator = total / subtotal distribui o desconto da venda proporcionalmente entre os itens

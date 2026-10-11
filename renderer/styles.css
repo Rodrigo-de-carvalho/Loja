@@ -2064,3 +2064,17 @@ code {
 .lgpd-lista { display: grid; grid-template-columns: 160px 1fr; gap: 8px 14px; font-size: 14px; }
 .lgpd-lista dt { color: var(--text-muted); }
 .lgpd-lista dd { font-weight: 600; }
+
+/* Faturamento anual (MEI) */
+.mei-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.mei-total { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mei-limite { font-size: 13px; color: var(--text-muted); text-align: right; }
+.mei-limite input { width: 130px; padding: 6px 10px; border: 1px solid var(--border-dark); border-radius: 8px; font: inherit; }
+.mei-barra { height: 14px; border-radius: 8px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--border); }
+.mei-barra span { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #059669); }
+.mei-barra.alerta span { background: linear-gradient(90deg, #fbbf24, #d97706); }
+.mei-barra.estourou span { background: linear-gradient(90deg, #f87171, #dc2626); }
+.mei-aviso { font-size: 13.5px; padding: 10px 14px; border-radius: 10px; }
+.mei-aviso.ok { background: var(--success-light); color: var(--success-dark); }
+.mei-aviso.alerta { background: var(--warning-light); color: #92400e; }
+.mei-aviso.estourou { background: var(--danger-light); color: #991b1b; }

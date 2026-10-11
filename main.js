@@ -140,6 +140,7 @@ function registrarHandlers() {
   ipcMain.handle('vendas:hoje',          ()        => db.vendasHoje())
   ipcMain.handle('vendas:mensais',       (_, m, a) => db.vendasMensais(m, a))
   ipcMain.handle('vendas:maisVendidos',  (_, m, a) => db.maisVendidos(m, a))
+  ipcMain.handle('vendas:faturamentoAnual', (_, a) => db.faturamentoAnual(a))
   ipcMain.handle('vendas:detalhes',      (_, id)   => db.detalhesVenda(id))
 
   /* Caixa */
