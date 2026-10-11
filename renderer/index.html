@@ -91,6 +91,8 @@
     <div class="sidebar-footer">
       <div id="clock" class="clock"></div>
       <div id="clock-date" class="clock-date"></div>
+      <div id="atualizacao-box" class="atualizacao-box" style="display:none;"></div>
+      <div id="versao-app" class="versao-app"></div>
     </div>
   </nav>
 
@@ -876,6 +878,23 @@
               </div>
               <div id="lista-backups" class="lista-backups"></div>
             </div>
+
+            <div class="card padded-card">
+              <h3 class="card-title"><svg class="ico"><use href="#i-shield"/></svg> Privacidade (LGPD)</h3>
+              <p class="text-muted">
+                O sistema guarda nome, telefone, CPF e endereço dos clientes do fiado. Pela LGPD, a loja deve informar
+                para que usa esses dados e atender quem pedir para ver ou apagar os próprios dados (botão
+                "Dados pessoais" na ficha do cliente).
+              </p>
+              <div class="form-group">
+                <label>Contato para assuntos de privacidade (aparece no aviso)</label>
+                <input type="text" id="privacidade-contato" placeholder="Ex.: WhatsApp (11) 90000-0000">
+              </div>
+              <button class="btn btn-primary" id="btn-aviso-privacidade">
+                <svg class="ico"><use href="#i-printer"/></svg> Gerar aviso de privacidade para o balcão
+              </button>
+              <p class="form-hint">Os backups também contêm esses dados: guarde o pendrive ou a pasta da nuvem em lugar seguro.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -1318,6 +1337,10 @@
           <label>Observação</label>
           <input type="text" id="cliente-obs" placeholder="Ex.: paga todo dia 10">
         </div>
+        <label class="check consentimento">
+          <input type="checkbox" id="cliente-consentimento">
+          <span id="cliente-consentimento-texto">O cliente foi informado de que estes dados ficam guardados só para controle do fiado e das trocas, e concordou.</span>
+        </label>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close="modal-cliente">Cancelar</button>
@@ -1352,6 +1375,7 @@
         </div>
       </div>
       <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-ficha-lgpd" style="margin-right:auto;"><svg class="ico"><use href="#i-shield"/></svg> Dados pessoais (LGPD)</button>
         <button class="btn btn-secondary" id="btn-ficha-imprimir"><svg class="ico"><use href="#i-printer"/></svg> Imprimir extrato</button>
         <button class="btn btn-success" id="btn-ficha-receber"><svg class="ico"><use href="#i-cash"/></svg> Receber pagamento</button>
       </div>

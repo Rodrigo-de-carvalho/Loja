@@ -91,6 +91,28 @@ Gera o instalador na pasta `dist/`.
 
 ---
 
+## Atualização automática
+
+O sistema instalado verifica novas versões no GitHub ao abrir e a cada 4 horas. A nova versão é baixada em segundo plano e instalada quando o sistema é fechado; também dá para clicar em "Reiniciar e atualizar agora" no rodapé do menu.
+
+Para lançar uma versão:
+
+```bash
+# 1. aumente "version" no package.json (ex.: 1.1.0 -> 1.2.0) e faça commit
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+O GitHub Actions (`.github/workflows/release.yml`) gera o instalador do Windows e publica em *Releases*. A primeira instalação com atualização automática precisa ser feita à mão, baixando o instalador da página de Releases. Como o instalador não é assinado digitalmente, o Windows mostra um aviso na primeira instalação ("Mais informações" → "Executar assim mesmo"); as atualizações seguintes não pedem nada.
+
+## Privacidade (LGPD)
+
+- O cadastro de cliente exige confirmar que o cliente foi informado e concorda (fica registrada a data).
+- Na ficha do cliente, "Dados pessoais (LGPD)" mostra tudo o que está guardado, imprime uma cópia para o cliente e apaga nome, telefone, CPF e endereço quando ele pedir (depois de quitar o fiado). As vendas continuam nos relatórios sem identificar a pessoa.
+- Em *Administrador → Segurança e backup* dá para gerar o aviso de privacidade para deixar no balcão.
+
+---
+
 ## Tecnologias
 
 - [Electron](https://electronjs.org/) — framework desktop

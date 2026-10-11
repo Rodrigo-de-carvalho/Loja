@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adminListarBackups:    ()             => ipcRenderer.invoke('admin:listarBackups'),
   adminAbrirPastaBackups:()             => ipcRenderer.invoke('admin:abrirPastaBackups'),
 
+  /* Versão e atualização */
+  versaoApp:            ()   => ipcRenderer.invoke('app:versao'),
+  statusAtualizacao:    ()   => ipcRenderer.invoke('atualizacao:status'),
+  instalarAtualizacao:  ()   => ipcRenderer.invoke('atualizacao:instalar'),
+  aoMudarAtualizacao:   (fn) => ipcRenderer.on('atualizacao:status', (_, s) => fn(s)),
+
   /* Vendas */
   finalizarVenda:     (d)    => ipcRenderer.invoke('vendas:finalizar', d),
   proximoNumeroVenda: ()     => ipcRenderer.invoke('vendas:proximoNumero'),
@@ -45,6 +51,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   excluirCliente:   (id) => ipcRenderer.invoke('clientes:excluir', id),
   extratoCliente:   (id) => ipcRenderer.invoke('clientes:extrato', id),
   receberCliente:   (d)  => ipcRenderer.invoke('clientes:receber', d),
+  anonimizarCliente:(id) => ipcRenderer.invoke('clientes:anonimizar', id),
 
   /* Trocas e vales */
   itensParaTroca: (id)   => ipcRenderer.invoke('trocas:itensVenda', id),

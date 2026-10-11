@@ -76,16 +76,26 @@ function abrirCadastroCliente(cliente = null, callback = null) {
   $('cliente-cpf').value      = cliente ? cliente.cpf || '' : ''
   $('cliente-endereco').value = cliente ? cliente.endereco || '' : ''
   $('cliente-obs').value      = cliente ? cliente.obs || '' : ''
+  const jaConcordou = !!(cliente && cliente.consentimento_em)
+  $('cliente-consentimento').checked  = jaConcordou
+  $('cliente-consentimento').disabled = jaConcordou
+  $('cliente-consentimento-texto').textContent = jaConcordou
+    ? `Cliente concordou com o cadastro em ${fmtDH(cliente.consentimento_em)}.`
+    : 'O cliente foi informado de que estes dados ficam guardados só para controle do fiado e das trocas, e concordou.'
   openModal('modal-cliente', 'cliente-nome')
 }
 $('btn-novo-cliente').addEventListener('click', () => abrirCadastroCliente())
 
 async function salvarCliente() {
+  if (!$('cliente-consentimento').checked) {
+    toast('Confirme que o cliente foi informado e concorda com o cadastro.', 'warn'); return
+  }
   try {
     const cliente = await api.salvarCliente({
       id: clienteEditId,
       nome: $('cliente-nome').value, telefone: $('cliente-telefone').value, cpf: $('cliente-cpf').value,
-      endereco: $('cliente-endereco').value, obs: $('cliente-obs').value
+      endereco: $('cliente-endereco').value, obs: $('cliente-obs').value,
+      consentimento: $('cliente-consentimento').checked
     })
     closeModal('modal-cliente')
     toast('Cliente salvo!', 'success')
@@ -116,7 +126,7 @@ async function abrirFicha(id) {
   $('ficha-titulo').textContent = cliente.nome
   $('ficha-dados').innerHTML = [
     cliente.telefone && `<span class="info-pill">Telefone: <strong>${escHtml(cliente.telefone)}</strong></span>`,
-    cliente.cpf      && `<span class="info-pill">CPF: <strong>${escHtml(cliente.cpf)}</strong></span>`,
+    cliente.cpf      && `<span class="info-pill">CPF: <strong>${escHtml(cpfMascarado(cliente.cpf))}</strong></span>`,
     cliente.endereco && `<span class="info-pill">${escHtml(cliente.endereco)}</span>`,
     cliente.obs      && `<span class="info-pill">${escHtml(cliente.obs)}</span>`,
     `<span class="info-pill">Cliente desde <strong>${fmtDH(cliente.criado_em).slice(0, 10)}</strong></span>`
@@ -216,3 +226,85 @@ function imprimirRecebimento({ pagamento, cliente, saldo }) {
     c.assinatura('Cantinho do Bebê')
   })
 }
+
+/* ---------- LGPD ---------- */
+// Mostra só os 5 últimos dígitos do CPF na tela
+function cpfMascarado(cpf) {
+  const d = String(cpf || '').replace(/\D/g, '')
+  return d.length === 11 ? `***.***.${d.slice(6, 9)}-${d.slice(9)}` : '***'
+}
+
+$('btn-ficha-lgpd').addEventListener('click', () => {
+  const { cliente, saldo, vales } = fichaCliente
+  const campo = (rotulo, valor) => `<dt>${rotulo}</dt><dd>${valor ? escHtml(valor) : '<span class="text-muted">não informado</span>'}</dd>`
+  abrirInfo(`Dados pessoais — ${cliente.nome}`, `
+    <p class="text-muted">Estes são todos os dados pessoais que a loja guarda deste cliente. Ele pode pedir uma cópia ou que sejam apagados.</p>
+    <dl class="lgpd-lista">
+      ${campo('Nome', cliente.nome)}
+      ${campo('Telefone', cliente.telefone)}
+      ${campo('CPF', cliente.cpf)}
+      ${campo('Endereço', cliente.endereco)}
+      ${campo('Observação', cliente.obs)}
+      ${campo('Cadastrado em', fmtDH(cliente.criado_em))}
+      ${campo('Concordou em', cliente.consentimento_em ? fmtDH(cliente.consentimento_em) : 'antes do registro de consentimento')}
+      ${campo('Para que é usado', 'Controle de compras fiado, pagamentos e vales-troca')}
+    </dl>
+    ${saldo > 0 || vales.length ? `<div class="vale-banner" style="margin-top:6px;">${icon('alert')}
+      ${saldo > 0 ? `O cliente ainda deve ${fmtMoeda(saldo)}.` : ''} ${vales.length ? 'Tem vale-troca com saldo.' : ''}
+      Os dados só podem ser apagados depois de quitar.</div>` : ''}`,
+    `<button class="btn btn-secondary" data-lgpd="imprimir">${icon('printer')} Imprimir para o cliente</button>
+     <button class="btn btn-danger-outline" data-lgpd="apagar" ${saldo > 0 || vales.length ? 'disabled' : ''}>${icon('trash')} Apagar dados pessoais</button>`)
+})
+
+$('info-rodape').addEventListener('click', e => {
+  const b = e.target.closest('[data-lgpd]'); if (!b || !fichaCliente) return
+  const { cliente } = fichaCliente
+  if (b.dataset.lgpd === 'imprimir') {
+    cupomTermico(c => {
+      c.cabecalho('Seus dados pessoais')
+      c.espaco(2); c.solida()
+      c.linha('Nome:', cliente.nome)
+      c.linha('Telefone:', cliente.telefone || '-')
+      c.linha('CPF:', cliente.cpf || '-')
+      if (cliente.endereco) c.texto(`Endereco: ${cliente.endereco}`, { tam: 8 })
+      c.linha('Cadastro:', fmtDH(cliente.criado_em))
+      c.tracejada()
+      c.texto('Usamos estes dados somente para controlar compras fiado, pagamentos e vales-troca. Nao compartilhamos com terceiros. Voce pode pedir a correcao ou a exclusao a qualquer momento.')
+    })
+  }
+  if (b.dataset.lgpd === 'apagar') {
+    confirmar(`Apagar os dados pessoais de "${cliente.nome}"?\n\nNome, telefone, CPF, endereço e observação serão apagados para sempre. As vendas continuam nos relatórios, sem identificar o cliente.`, async () => {
+      try {
+        await api.anonimizarCliente(cliente.id)
+        closeModal('modal-info'); closeModal('modal-ficha')
+        toast('Dados pessoais apagados.', 'success')
+        await carregarClientes()
+      } catch (err) { toast(msgErro(err), 'error') }
+    }, { titulo: 'Apagar dados pessoais', botao: 'Apagar' })
+  }
+})
+
+/* Aviso de privacidade para deixar no balcão (A4) */
+$('btn-aviso-privacidade').addEventListener('click', () => {
+  const contato = $('privacidade-contato').value.trim()
+  const doc = _novoPDF()
+  let y = _pdfHeader(doc, 'Aviso de Privacidade', 'Lei Geral de Proteção de Dados (Lei 13.709/2018)')
+  const W = 182, m = 14
+  const secao = (titulo, texto) => {
+    doc.setTextColor(30, 41, 59); doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5)
+    doc.text(titulo, m, y); y += 6
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(51, 65, 85)
+    const linhas = doc.splitTextToSize(texto, W)
+    doc.text(linhas, m, y); y += linhas.length * 5.2 + 5
+  }
+  secao('Quem cuida dos seus dados', 'A loja Cantinho do Bebê é responsável pelos dados pessoais informados no cadastro de clientes.')
+  secao('Quais dados guardamos', 'Nome, telefone, CPF e endereço (quando informados), além do histórico de compras feitas no fiado, pagamentos e vales-troca.')
+  secao('Para que usamos', 'Somente para controlar as compras fiado, registrar os pagamentos, emitir comprovantes e controlar vales-troca. Não usamos os dados para propaganda e não vendemos nem compartilhamos com terceiros.')
+  secao('Por quanto tempo', 'Enquanto você for nosso cliente ou houver valores em aberto. Os registros de vendas são mantidos pelo prazo exigido pela legislação fiscal, sem identificação pessoal depois que você pedir a exclusão.')
+  secao('Como protegemos', 'Os dados ficam no computador da loja, com cópias de segurança guardadas em local protegido, e só a proprietária tem acesso às áreas restritas do sistema.')
+  secao('Seus direitos', 'Você pode, a qualquer momento e sem custo, pedir para ver seus dados, corrigir informações erradas ou apagar seus dados pessoais (depois de quitar valores em aberto). Basta falar com a gente no balcão.')
+  secao('Contato', contato || 'Fale com a proprietária no balcão da loja.')
+  _pdfFooter(doc)
+  doc.save('aviso-de-privacidade.pdf')
+  toast('Aviso de privacidade gerado. Imprima e deixe no balcão.', 'success')
+})

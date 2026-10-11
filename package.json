@@ -1,6 +1,6 @@
 {
   "name": "cantinho-do-bebe-pdv",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sistema PDV — Cantinho do Bebê",
   "main": "main.js",
   "scripts": {
@@ -8,10 +8,12 @@
     "postinstall": "electron-builder install-app-deps",
     "build": "electron-builder --win --publish never",
     "build:win": "electron-builder --win --publish never",
-    "build:linux": "electron-builder --linux --publish never"
+    "build:linux": "electron-builder --linux --publish never",
+    "release": "electron-builder --win --publish always"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
+    "electron-updater": "^6.8.9",
     "jsbarcode": "^3.11.6",
     "jspdf": "^2.5.1"
   },
@@ -40,7 +42,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "requestedExecutionLevel": "asInvoker"
@@ -59,6 +63,14 @@
     "linux": {
       "target": "AppImage",
       "category": "Office"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Rodrigo-de-carvalho",
+        "repo": "Loja",
+        "releaseType": "release"
+      }
+    ]
   }
 }

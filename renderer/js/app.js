@@ -128,8 +128,11 @@ function toast(msg, type='') {
    MODAL
    ============================================================ */
 // Abre o modal e já move o foco para dentro dele, para que nada digitado caia na tela de trás
+let camadaModal = 500
 function openModal(id, focoId=null) {
   const overlay = $(id)
+  // O modal aberto por último sempre fica por cima dos outros
+  overlay.style.zIndex = ++camadaModal
   overlay.classList.add('open')
   const ativo = document.activeElement
   if (ativo && !overlay.contains(ativo)) ativo.blur()
@@ -140,8 +143,9 @@ function closeModal(id) {
   if (!modalAberto() && secaoAtiva()==='caixa') focarScanner()
 }
 function modalAberto()  {
-  const abertos = document.querySelectorAll('.modal-overlay.open')
-  return abertos.length ? abertos[abertos.length-1].id : null
+  const abertos = [...document.querySelectorAll('.modal-overlay.open')]
+  if (!abertos.length) return null
+  return abertos.reduce((a, b) => (Number(b.style.zIndex)||0) > (Number(a.style.zIndex)||0) ? b : a).id
 }
 
 document.querySelectorAll('[data-close]').forEach(btn =>
@@ -2193,6 +2197,7 @@ async function estornarVenda(id) {
    ============================================================ */
 async function init() {
   iniciarRelogio()
+  iniciarVersao()
   initDateSelectors()
   renderCarrinho()
   try {
@@ -2201,6 +2206,37 @@ async function init() {
   } catch(err) { toast(`Erro ao iniciar: ${msgErro(err)}`,'error') }
   navigateTo('caixa')
 }
+
+/* ============================================================
+   VERSÃO E ATUALIZAÇÃO AUTOMÁTICA
+   ============================================================ */
+function renderAtualizacao(st) {
+  const box = $('atualizacao-box')
+  if (st && st.estado === 'pronta') {
+    box.style.display = 'block'
+    box.innerHTML = `Versão ${escHtml(st.versao)} pronta. Será instalada quando o sistema for fechado.
+      <button id="btn-instalar-atualizacao">Reiniciar e atualizar agora</button>`
+  } else if (st && st.estado === 'baixando') {
+    box.style.display = 'block'
+    box.innerHTML = `Baixando versão ${escHtml(st.versao || '')}${st.progresso != null ? ` (${st.progresso}%)` : ''}...`
+  } else box.style.display = 'none'
+}
+
+async function iniciarVersao() {
+  if (!api.versaoApp) return
+  try {
+    $('versao-app').textContent = `Versão ${await api.versaoApp()}`
+    renderAtualizacao(await api.statusAtualizacao())
+    api.aoMudarAtualizacao(renderAtualizacao)
+  } catch (e) { /* sem informação de versão */ }
+}
+
+$('atualizacao-box').addEventListener('click', e => {
+  if (!e.target.closest('#btn-instalar-atualizacao')) return
+  if (carrinho.length) { toast('Termine a venda em andamento antes de atualizar.', 'warn'); return }
+  confirmar('O sistema vai fechar, instalar a nova versão e abrir de novo. Seus dados continuam salvos.', () => api.instalarAtualizacao(),
+    { titulo: 'Atualizar agora', botao: 'Atualizar' })
+})
 
 // Espera os outros scripts (caixa, clientes, trocas, mercadorias) carregarem
 document.addEventListener('DOMContentLoaded', init)

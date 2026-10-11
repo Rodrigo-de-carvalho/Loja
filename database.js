@@ -239,6 +239,10 @@ class Database {
     this._addColuna('vendas', 'caixa_id',       'INTEGER')
     this._addColuna('vendas', 'cliente_id',     'INTEGER')
 
+    // LGPD: quando o cliente concordou e quando os dados pessoais foram apagados
+    this._addColuna('clientes', 'consentimento_em', 'TEXT')
+    this._addColuna('clientes', 'anonimizado_em',   'TEXT')
+
     // Senha com salt (scrypt)
     this._addColuna('admin_config', 'salt', 'TEXT')
     this._addColuna('admin_config', 'algo', "TEXT NOT NULL DEFAULT 'sha256'")
@@ -774,6 +778,7 @@ class Database {
           - (SELECT COALESCE(SUM(valor),0) FROM cliente_pagamentos WHERE cliente_id = c.id), 2) AS saldo,
         (SELECT MAX(criado_em) FROM vendas v WHERE v.cliente_id = c.id AND v.status = 'concluida') AS ultima_compra
       FROM clientes c
+      WHERE c.anonimizado_em IS NULL
       ORDER BY c.nome COLLATE NOCASE
     `).all()
   }
@@ -784,10 +789,14 @@ class Database {
     const campos = [nome, texto(d.telefone) || null, texto(d.cpf) || null, texto(d.endereco) || null, texto(d.obs) || null]
     if (d.id) {
       this.db.prepare('UPDATE clientes SET nome = ?, telefone = ?, cpf = ?, endereco = ?, obs = ? WHERE id = ?').run(...campos, d.id)
+      if (d.consentimento) {
+        this.db.prepare("UPDATE clientes SET consentimento_em = datetime('now','localtime') WHERE id = ? AND consentimento_em IS NULL").run(d.id)
+      }
       return this.db.prepare('SELECT * FROM clientes WHERE id = ?').get(d.id)
     }
+    if (!d.consentimento) throw new Error('Confirme que o cliente foi informado e concorda com o cadastro.')
     const { lastInsertRowid } = this.db.prepare(
-      'INSERT INTO clientes (nome, telefone, cpf, endereco, obs) VALUES (?, ?, ?, ?, ?)'
+      "INSERT INTO clientes (nome, telefone, cpf, endereco, obs, consentimento_em) VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))"
     ).run(...campos)
     return this.db.prepare('SELECT * FROM clientes WHERE id = ?').get(lastInsertRowid)
   }
@@ -795,8 +804,26 @@ class Database {
   excluirCliente(id) {
     const temHistorico = this.db.prepare('SELECT 1 FROM vendas WHERE cliente_id = ? LIMIT 1').get(id)
       || this.db.prepare('SELECT 1 FROM cliente_pagamentos WHERE cliente_id = ? LIMIT 1').get(id)
-    if (temHistorico) throw new Error('Este cliente tem compras ou pagamentos registrados e não pode ser excluído.')
+    if (temHistorico) throw new Error('Este cliente tem compras registradas. Para atender um pedido de exclusão, use "Apagar dados pessoais" na ficha do cliente.')
     return this.db.prepare('DELETE FROM clientes WHERE id = ?').run(id)
+  }
+
+  /**
+   * LGPD — direito de eliminação: apaga nome, telefone, CPF, endereço e observação,
+   * mantendo as vendas (obrigação fiscal e contábil) ligadas a um cliente sem identificação.
+   */
+  anonimizarCliente(id) {
+    const cliente = this.db.prepare('SELECT * FROM clientes WHERE id = ?').get(id)
+    if (!cliente || cliente.anonimizado_em) throw new Error('Cliente não encontrado.')
+    const saldo = this._saldoCliente(id)
+    if (saldo > 0.001) throw new Error(`O cliente ainda deve R$ ${saldo.toFixed(2).replace('.', ',')}. Receba o saldo antes de apagar os dados.`)
+    const vale = this.db.prepare('SELECT codigo FROM vales WHERE cliente_id = ? AND saldo > 0 LIMIT 1').get(id)
+    if (vale) throw new Error(`O cliente tem o vale-troca ${vale.codigo} com saldo. Use o vale antes de apagar os dados.`)
+    this.db.prepare(`
+      UPDATE clientes SET nome = ?, telefone = NULL, cpf = NULL, endereco = NULL, obs = NULL,
+        anonimizado_em = datetime('now','localtime') WHERE id = ?
+    `).run(`Cliente removido nº ${id}`, id)
+    return true
   }
 
   extratoCliente(id) {

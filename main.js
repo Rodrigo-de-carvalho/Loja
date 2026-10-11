@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron')
 const fs       = require('fs')
 const path     = require('path')
 const Database = require('./database')
+const { autoUpdater } = require('electron-updater')
 
 const BACKUPS_MANTIDOS = 30
 
@@ -124,6 +125,15 @@ function registrarHandlers() {
     return filePath
   }))
 
+  /* Versão e atualização */
+  ipcMain.handle('app:versao',             () => app.getVersion())
+  ipcMain.handle('atualizacao:status',     () => statusAtualizacao)
+  ipcMain.handle('atualizacao:instalar',   () => {
+    if (statusAtualizacao.estado !== 'pronta') return false
+    setImmediate(() => autoUpdater.quitAndInstall())
+    return true
+  })
+
   /* Vendas */
   ipcMain.handle('vendas:finalizar',     (_, d)    => db.finalizarVenda(d))
   ipcMain.handle('vendas:proximoNumero', ()        => db.proximoNumeroVenda())
@@ -146,6 +156,7 @@ function registrarHandlers() {
   ipcMain.handle('clientes:excluir',  (_, id)=> db.excluirCliente(id))
   ipcMain.handle('clientes:extrato',  (_, id)=> db.extratoCliente(id))
   ipcMain.handle('clientes:receber',  (_, d) => db.receberPagamentoCliente(d))
+  ipcMain.handle('clientes:anonimizar', (_, id)=> db.anonimizarCliente(id))
 
   /* Trocas e vales */
   ipcMain.handle('trocas:itensVenda', (_, id)   => db.itensParaTroca(id))
@@ -164,12 +175,44 @@ function registrarHandlers() {
   ipcMain.handle('entradas:detalhes',    somenteAdmin((_, id)  => db.detalhesEntrada(id)))
 }
 
+/* -------------------------------------------------------
+   ATUALIZAÇÃO AUTOMÁTICA (GitHub Releases)
+   Baixa a nova versão em segundo plano e instala ao fechar o
+   sistema, para nunca interromper uma venda.
+   ------------------------------------------------------- */
+let statusAtualizacao = { estado: 'desativado' }
+
+function avisarAtualizacao(estado, extra = {}) {
+  statusAtualizacao = { estado, ...extra }
+  if (mainWindow) mainWindow.webContents.send('atualizacao:status', statusAtualizacao)
+}
+
+function iniciarAtualizacaoAutomatica() {
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('checking-for-update',  () => avisarAtualizacao('verificando'))
+  autoUpdater.on('update-not-available', () => avisarAtualizacao('atualizado'))
+  autoUpdater.on('update-available',     i  => avisarAtualizacao('baixando', { versao: i.version }))
+  autoUpdater.on('download-progress',    p  => avisarAtualizacao('baixando', { versao: statusAtualizacao.versao, progresso: Math.round(p.percent) }))
+  autoUpdater.on('update-downloaded',    i  => avisarAtualizacao('pronta', { versao: i.version }))
+  autoUpdater.on('error', err => {
+    // Sem internet não é problema: tenta de novo na próxima verificação
+    console.error('Atualização:', err && err.message)
+    avisarAtualizacao('erro')
+  })
+  const verificar = () => autoUpdater.checkForUpdates().catch(() => {})
+  setTimeout(verificar, 15 * 1000)
+  setInterval(verificar, 4 * 60 * 60 * 1000)
+}
+
 app.whenReady().then(() => {
   const dbPath = path.join(app.getPath('userData'), 'loja-bebe.db')
   db = new Database(dbPath)
   registrarHandlers()
   createWindow()
   backupAutomatico()
+  iniciarAtualizacaoAutomatica()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
