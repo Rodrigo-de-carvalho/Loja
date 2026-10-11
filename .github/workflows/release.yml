@@ -1,42 +1,65 @@
 # Gera o instalador do Windows e publica no GitHub Releases.
 # O sistema instalado na loja verifica essas versões e se atualiza sozinho.
 #
-# Para lançar uma versão:
-#   1. Aumente "version" no package.json (ex.: 1.1.0 -> 1.2.0) e faça commit
-#   2. git tag v1.2.0 && git push origin v1.2.0
+# Para lançar uma versão, basta aumentar "version" no package.json
+# (ex.: 1.1.0 -> 1.2.0) e juntar na main. O workflow cria a tag vX.Y.Z,
+# gera o instalador e publica. Se a versão não mudou, ele não faz nada.
 name: Lançar versão
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decidir se há versão nova
+        id: versao
+        shell: bash
+        run: |
+          TAG="v$(node -p "require('./package.json').version")"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "$TAG" ]; then
+              echo "A tag ${GITHUB_REF_NAME} não bate com a versão $TAG do package.json"
+              exit 1
+            fi
+            echo "lancar=true" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "A versão $TAG já foi lançada. Nada a fazer."
+            echo "lancar=false" >> "$GITHUB_OUTPUT"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "lancar=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.versao.outputs.lancar == 'true'
         with:
           node-version: 20
           cache: npm
 
-      - name: Conferir se a tag bate com a versão do package.json
-        shell: bash
-        run: |
-          VERSAO="v$(node -p "require('./package.json').version")"
-          if [ "$VERSAO" != "${GITHUB_REF_NAME}" ]; then
-            echo "A tag ${GITHUB_REF_NAME} não bate com a versão $VERSAO do package.json"
-            exit 1
-          fi
-
       - name: Instalar dependências
+        if: steps.versao.outputs.lancar == 'true'
         run: npm ci
 
       - name: Gerar instalador e publicar
+        if: steps.versao.outputs.lancar == 'true'
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

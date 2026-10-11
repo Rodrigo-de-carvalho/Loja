@@ -95,15 +95,9 @@ Gera o instalador na pasta `dist/`.
 
 O sistema instalado verifica novas versões no GitHub ao abrir e a cada 4 horas. A nova versão é baixada em segundo plano e instalada quando o sistema é fechado; também dá para clicar em "Reiniciar e atualizar agora" no rodapé do menu.
 
-Para lançar uma versão:
+Para lançar uma versão, aumente `"version"` no `package.json` (ex.: 1.1.0 → 1.2.0) e junte na `main`.
 
-```bash
-# 1. aumente "version" no package.json (ex.: 1.1.0 -> 1.2.0) e faça commit
-git tag v1.2.0
-git push origin v1.2.0
-```
-
-O GitHub Actions (`.github/workflows/release.yml`) gera o instalador do Windows e publica em *Releases*. A primeira instalação com atualização automática precisa ser feita à mão, baixando o instalador da página de Releases. Como o instalador não é assinado digitalmente, o Windows mostra um aviso na primeira instalação ("Mais informações" → "Executar assim mesmo"); as atualizações seguintes não pedem nada.
+O GitHub Actions (`.github/workflows/release.yml`) cria a tag `vX.Y.Z`, gera o instalador do Windows e publica em *Releases*. Se a versão não mudou, ele não faz nada. A primeira instalação com atualização automática precisa ser feita à mão, baixando o instalador da página de Releases. Como o instalador não é assinado digitalmente, o Windows mostra um aviso na primeira instalação ("Mais informações" → "Executar assim mesmo"); as atualizações seguintes não pedem nada.
 
 ## Privacidade (LGPD)
 
