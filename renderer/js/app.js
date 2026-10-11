@@ -7,13 +7,21 @@ const api = window.electronAPI
    ============================================================ */
 let todosProdutos    = []
 let carrinho         = []
+let ultimoIdx        = -1
+let descontoCfg      = null   // { tipo: 'valor' | 'percentual', valor }
+let finalizando      = false
 let produtoEditId    = null
-let codigoAtual      = ''
 let confirmCallback  = null
 let isAdmin          = false
 let adminEditCustoId = null
 let ultimaVendaId    = null
 let detalheVendaId   = null
+let filtroEstoque    = 'todos'
+let buscaSelIdx      = 0
+let buscaLista       = []
+
+const ESTOQUE_BAIXO     = 3
+const ADMIN_TIMEOUT_MS  = 10 * 60 * 1000
 
 /* ============================================================
    UTILS
@@ -22,8 +30,19 @@ function fmt(v)       { return Number(v||0).toLocaleString('pt-BR',{minimumFract
 function fmtMoeda(v)  { return `R$ ${fmt(v)}` }
 function fmtHora(s)   { if(!s)return'—'; const d=new Date(s.replace(' ','T')); return isNaN(d)?s:d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) }
 function fmtDH(s)     { if(!s)return'—'; const d=new Date(s.replace(' ','T')); return isNaN(d)?s:`${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` }
-function margem(c,v)  { if(!c||c===0)return'—'; return (((v-c)/c)*100).toFixed(1)+'%' }
-function escHtml(s)   { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
+function fmtNumVenda(n) { return String(n).padStart(6,'0') }
+function fmtPct(v)    { return `${Number(v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})}%` }
+function margem(c,v)  { if(!c||c===0)return'—'; return fmtPct(((v-c)/c)*100) }
+function maiuscula(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
+function escHtml(s)   { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;') }
+function round2(v)    { return Math.round((Number(v)||0)*100)/100 }
+function icon(nome)   { return `<svg class="ico"><use href="#i-${nome}"/></svg>` }
+const $ = id => document.getElementById(id)
+
+// Remove o prefixo técnico que o Electron adiciona aos erros vindos do processo principal
+function msgErro(err) {
+  return String(err && err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+}
 
 function gerarCodigoBarras() {
   return `${Date.now().toString().slice(-9)}${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`
@@ -37,33 +56,59 @@ function renderBarcode(selector, codigo, opts={}) {
       margin:opts.margin!==undefined?opts.margin:6,
       background:'#ffffff', lineColor:'#000000'
     })
-  } catch(e) { console.warn('Barcode:', e) }
+    return true
+  } catch(e) { console.warn('Barcode:', e); return false }
 }
 
-const PAGAMENTO_LABEL = {
-  pix:      '📱 PIX',
-  debito:   '💳 Débito',
-  credito:  '💳 Crédito',
-  dinheiro: '💵 Dinheiro'
+const PAGAMENTO_LABEL = { pix:'PIX', debito:'Débito', credito:'Crédito', dinheiro:'Dinheiro', fiado:'Fiado', vale:'Vale-troca', multiplo:'Mais de uma forma' }
+const PAGAMENTO_ICON  = { pix:'pix', debito:'card', credito:'card', dinheiro:'cash', fiado:'user', vale:'ticket', multiplo:'wallet' }
+
+// Versão sem acento para uso no comprovante térmico
+const PAGAMENTO_PDF = { pix:'PIX', debito:'Debito', credito:'Credito', dinheiro:'Dinheiro', fiado:'Fiado', vale:'Vale-troca', multiplo:'Varias formas' }
+
+/* Queima de estoque: preço especial para um número limitado de peças */
+function hojeISO() { return new Date().toLocaleDateString('sv-SE') }
+function agoraTexto() { const d = new Date(); return `${d.toLocaleDateString('pt-BR')} ${d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` }
+function promoAtiva(p) {
+  return !!(p && p.preco_promo > 0 && p.promo_qtd > 0 && (!p.promo_ate || p.promo_ate >= hojeISO()))
+}
+function badgeQueima(p) {
+  return promoAtiva(p) ? `<span class="badge-queima" title="Queima de estoque">Queima ${fmtMoeda(p.preco_promo)} · ${p.promo_qtd} pç</span>` : ''
 }
 
-// Versão sem emoji para uso em PDF (fontes padrão do jsPDF não suportam emoji)
-const PAGAMENTO_PDF = {
-  pix:      'PIX',
-  debito:   'Debito',
-  credito:  'Credito',
-  dinheiro: 'Dinheiro'
+function badgePagamento(p) {
+  return `<span class="badge-pagamento">${icon(PAGAMENTO_ICON[p]||'wallet')}${PAGAMENTO_LABEL[p]||escHtml(p)}</span>`
+}
+
+function badgeEstoque(qtd) {
+  if (qtd <= 0)             return `<span class="badge-estoque-baixo">${qtd}</span>`
+  if (qtd <= ESTOQUE_BAIXO) return `<span class="badge-estoque-aviso">${qtd}</span>`
+  return `<span class="badge-estoque-ok">${qtd}</span>`
+}
+
+function linhaVazia(colspan, iconNome, titulo, dica='') {
+  return `<tr><td colspan="${colspan}" class="empty-state">
+    <div class="empty-icon">${icon(iconNome)}</div>
+    <div class="empty-title">${titulo}</div>
+    ${dica?`<div class="empty-hint">${dica}</div>`:''}
+  </td></tr>`
 }
 
 const MESES_PT = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
 
-/* ============================================================
-   CRYPTO — hash SHA-256 usando Web Crypto API (Electron/Chromium)
-   ============================================================ */
-async function hashStr(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('')
+/* Bipe curto (sucesso) ou grave (erro), como nos leitores de caixa */
+let audioCtx = null
+function bipe(tipo='ok') {
+  try {
+    audioCtx = audioCtx || new AudioContext()
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain()
+    osc.type = tipo==='erro' ? 'square' : 'sine'
+    osc.frequency.value = tipo==='erro' ? 220 : 1400
+    gain.gain.value = 0.06
+    osc.connect(gain); gain.connect(audioCtx.destination)
+    osc.start(); osc.stop(audioCtx.currentTime + (tipo==='erro' ? 0.28 : 0.07))
+  } catch(e) { /* sem áudio disponível */ }
 }
 
 /* ============================================================
@@ -71,37 +116,57 @@ async function hashStr(str) {
    ============================================================ */
 let toastTimer = null
 function toast(msg, type='') {
-  const el = document.getElementById('toast')
+  const el = $('toast')
   el.textContent = msg
   el.className = `toast${type?' toast-'+type:''}`
   el.classList.add('show')
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(()=>el.classList.remove('show'), 3200)
+  toastTimer = setTimeout(()=>el.classList.remove('show'), 3400)
 }
 
 /* ============================================================
    MODAL
    ============================================================ */
-function openModal(id)  { document.getElementById(id).classList.add('open') }
-function closeModal(id) { document.getElementById(id).classList.remove('open') }
+// Abre o modal e já move o foco para dentro dele, para que nada digitado caia na tela de trás
+let camadaModal = 500
+function openModal(id, focoId=null) {
+  const overlay = $(id)
+  // O modal aberto por último sempre fica por cima dos outros
+  overlay.style.zIndex = ++camadaModal
+  overlay.classList.add('open')
+  const ativo = document.activeElement
+  if (ativo && !overlay.contains(ativo)) ativo.blur()
+  if (focoId) { $(focoId).focus(); if ($(focoId).select) $(focoId).select() }
+}
+function closeModal(id) {
+  $(id).classList.remove('open')
+  if (!modalAberto() && secaoAtiva()==='caixa') focarScanner()
+}
+function modalAberto()  {
+  const abertos = [...document.querySelectorAll('.modal-overlay.open')]
+  if (!abertos.length) return null
+  return abertos.reduce((a, b) => (Number(b.style.zIndex)||0) > (Number(a.style.zIndex)||0) ? b : a).id
+}
 
 document.querySelectorAll('[data-close]').forEach(btn =>
   btn.addEventListener('click', () => closeModal(btn.dataset.close))
 )
 document.querySelectorAll('.modal-overlay').forEach(overlay =>
-  overlay.addEventListener('click', e => { if(e.target===overlay) closeModal(overlay.id) })
+  overlay.addEventListener('mousedown', e => { if(e.target===overlay) closeModal(overlay.id) })
 )
 
 /* ============================================================
    CONFIRMAR
    ============================================================ */
-function confirmar(msg, cb) {
-  document.getElementById('confirmar-msg').textContent = msg
+function confirmar(msg, cb, { titulo='Confirmar', botao='Confirmar' } = {}) {
+  $('confirmar-titulo').textContent  = titulo
+  $('confirmar-msg').textContent     = msg
+  $('btn-confirmar-sim').textContent = botao
   confirmCallback = cb
-  openModal('modal-confirmar')
+  openModal('modal-confirmar', 'btn-confirmar-sim')
 }
-document.getElementById('btn-confirmar-nao').addEventListener('click', ()=>closeModal('modal-confirmar'))
-document.getElementById('btn-confirmar-sim').addEventListener('click', ()=>{
+$('btn-confirmar-nao').addEventListener('click', ()=>closeModal('modal-confirmar'))
+$('btn-confirmar-sim').addEventListener('click', ()=>{
   closeModal('modal-confirmar')
   if(confirmCallback) confirmCallback()
 })
@@ -113,17 +178,25 @@ document.querySelectorAll('.nav-item').forEach(item =>
   item.addEventListener('click', ()=>navigateTo(item.dataset.section))
 )
 
+function secaoAtiva() {
+  const s = document.querySelector('.section.active')
+  return s ? s.id.replace('section-','') : null
+}
+
 function navigateTo(section) {
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'))
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'))
   document.querySelector(`.nav-item[data-section="${section}"]`).classList.add('active')
-  document.getElementById(`section-${section}`).classList.add('active')
+  $(`section-${section}`).classList.add('active')
 
-  if (section === 'produtos')   renderProdutos(todosProdutos)
-  if (section === 'etiquetas')  preencherSelectEtiquetas()
-  if (section === 'caixa')      focusCaixa()
+  if (section === 'produtos')   renderProdutos()
+  if (section === 'etiquetas')  { preencherSelectEtiquetas(); renderEtiquetasPreview() }
+  if (section === 'caixa')      { atualizarNumeroVenda(); focarScanner() }
   if (section === 'relatorios') carregarHoje()
   if (section === 'admin')      renderAdminState()
+  if (section === 'clientes')   carregarClientes()
+  if (section === 'trocas')     abrirTrocas()
+  if (section === 'mercadorias')abrirMercadorias()
 }
 
 /* ============================================================
@@ -131,8 +204,9 @@ function navigateTo(section) {
    ============================================================ */
 function iniciarRelogio() {
   const tick = () => {
-    document.getElementById('clock').textContent =
-      new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+    const d = new Date()
+    $('clock').textContent      = d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+    $('clock-date').textContent = maiuscula(d.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}))
   }
   tick(); setInterval(tick, 1000)
 }
@@ -142,112 +216,211 @@ function iniciarRelogio() {
    ============================================================ */
 async function carregarProdutos() {
   todosProdutos = await api.listarProdutos()
-  renderProdutos(todosProdutos)
+  if (secaoAtiva()==='produtos') renderProdutos()
 }
 
-function renderProdutos(lista) {
-  document.getElementById('contador-produtos').textContent =
-    `${lista.length} produto${lista.length!==1?'s':''}`
+function produtosFiltrados() {
+  const q = $('input-busca-produto').value.trim().toLowerCase()
+  return todosProdutos.filter(p => {
+    if (q && !p.nome.toLowerCase().includes(q) && !p.codigo_barras.includes(q)) return false
+    if (filtroEstoque==='baixo')  return p.estoque > 0 && p.estoque <= ESTOQUE_BAIXO
+    if (filtroEstoque==='zerado') return p.estoque <= 0
+    if (filtroEstoque==='queima') return promoAtiva(p)
+    return true
+  })
+}
 
-  const tbody = document.getElementById('tbody-produtos')
+function renderProdutos() {
+  const zerados = todosProdutos.filter(p=>p.estoque<=0).length
+  const baixos  = todosProdutos.filter(p=>p.estoque>0 && p.estoque<=ESTOQUE_BAIXO).length
+  const pecas   = todosProdutos.reduce((s,p)=>s+Math.max(p.estoque,0),0)
+  const valor   = todosProdutos.reduce((s,p)=>s+Math.max(p.estoque,0)*p.preco_venda,0)
+
+  $('stats-produtos').innerHTML = `
+    <div class="stat-card c-purple"><span class="stat-label">Produtos</span><span class="stat-value">${todosProdutos.length}</span></div>
+    <div class="stat-card c-green"><span class="stat-label">Peças em estoque</span><span class="stat-value">${pecas}</span><span class="stat-sub">${fmtMoeda(valor)} em preço de venda</span></div>
+    <div class="stat-card c-orange"><span class="stat-label">Estoque baixo</span><span class="stat-value">${baixos}</span><span class="stat-sub">até ${ESTOQUE_BAIXO} peças</span></div>
+    <div class="stat-card c-red"><span class="stat-label">Sem estoque</span><span class="stat-value">${zerados}</span></div>`
+
+  const lista = produtosFiltrados()
+  $('contador-produtos').textContent = `${lista.length} produto${lista.length!==1?'s':''}`
+
+  const tbody = $('tbody-produtos')
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">
-      <div class="empty-icon">📦</div>
-      <div>Nenhum produto encontrado</div>
-      <div class="empty-hint">Clique em "Novo Produto" para começar</div>
-    </td></tr>`
+    tbody.innerHTML = todosProdutos.length
+      ? linhaVazia(5, 'search', 'Nenhum produto encontrado', 'Tente outro nome ou filtro')
+      : linhaVazia(5, 'box', 'Nenhum produto cadastrado', 'Clique em "Novo produto" para começar')
     return
   }
 
-  tbody.innerHTML = lista.map(p => {
-    const estBadge = p.estoque <= 0
-      ? `<span class="badge-estoque-baixo">0</span>`
-      : p.estoque <= 3
-        ? `<span class="badge-estoque-aviso">${p.estoque}</span>`
-        : `<span class="badge-estoque-ok">${p.estoque}</span>`
-
-    return `
-      <tr>
-        <td><code>${p.codigo_barras}</code></td>
-        <td><strong>${escHtml(p.nome)}</strong></td>
-        <td>${fmtMoeda(p.preco_venda)}</td>
-        <td>${estBadge}</td>
-        <td>
-          <div style="display:flex;gap:6px;">
-            <button class="btn btn-sm btn-secondary" onclick="abrirEditarProduto(${p.id})">✏️ Editar</button>
-            <button class="btn btn-sm btn-danger"    onclick="deletarProduto(${p.id},'${escHtml(p.nome).replace(/'/g,"\\'")}')">🗑️</button>
-          </div>
-        </td>
-      </tr>`
-  }).join('')
+  tbody.innerHTML = lista.map(p => `
+    <tr>
+      <td><code>${escHtml(p.codigo_barras)}</code></td>
+      <td><strong>${escHtml(p.nome)}</strong> ${badgeQueima(p)}</td>
+      <td class="num">${fmtMoeda(p.preco_venda)}</td>
+      <td class="ctr">${badgeEstoque(p.estoque)}</td>
+      <td>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm btn-secondary" data-acao="editar" data-id="${p.id}">${icon('edit')} Editar</button>
+          <button class="btn btn-sm btn-danger-outline btn-icon" data-acao="excluir" data-id="${p.id}" title="Excluir">${icon('trash')}</button>
+        </div>
+      </td>
+    </tr>`).join('')
 }
 
-document.getElementById('input-busca-produto').addEventListener('input', e => {
-  const q = e.target.value.toLowerCase()
-  renderProdutos(todosProdutos.filter(p =>
-    p.nome.toLowerCase().includes(q) || p.codigo_barras.includes(q)
-  ))
+$('tbody-produtos').addEventListener('click', e => {
+  const btn = e.target.closest('[data-acao]'); if (!btn) return
+  const id = Number(btn.dataset.id)
+  if (btn.dataset.acao==='editar')  abrirEditarProduto(id)
+  if (btn.dataset.acao==='excluir') deletarProduto(id)
 })
 
+$('input-busca-produto').addEventListener('input', renderProdutos)
+
+document.querySelectorAll('#filtro-estoque .chip').forEach(chip =>
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('#filtro-estoque .chip').forEach(c=>c.classList.remove('active'))
+    chip.classList.add('active')
+    filtroEstoque = chip.dataset.filtro
+    renderProdutos()
+  })
+)
+
+function atualizarPreviewCodigo() {
+  const codigo = $('produto-codigo').value.trim()
+  const ok = codigo && renderBarcode('#barcode-preview', codigo, {height:50,fontSize:11})
+  if (!ok) $('barcode-preview').innerHTML = ''
+  $('barcode-caption-texto').textContent = !codigo
+    ? 'Informe ou gere um código'
+    : ok ? (produtoEditId ? 'O código não pode ser alterado depois do cadastro' : 'Pronto para imprimir na etiqueta')
+         : 'Código inválido'
+}
+
+/* Queima de estoque no formulário do produto */
+function preencherPromo(p) {
+  const ativa = promoAtiva(p)
+  $('promo-ativa').checked = ativa
+  $('promo-preco').value   = ativa ? p.preco_promo : ''
+  $('promo-qtd').value     = ativa ? p.promo_qtd : ''
+  $('promo-ate').value     = ativa && p.promo_ate ? p.promo_ate : ''
+  atualizarPromoForm()
+}
+
+function atualizarPromoForm() {
+  const ativa = $('promo-ativa').checked
+  $('promo-campos').style.display = ativa ? '' : 'none'
+  const preco = parseFloat($('promo-preco').value), normal = parseFloat($('produto-venda').value)
+  const qtd = parseInt($('promo-qtd').value)
+  $('promo-resumo').textContent = !ativa ? 'Use para vender algumas peças mais baratas; depois o preço volta ao normal sozinho.'
+    : preco > 0 && qtd > 0
+      ? `As próximas ${qtd} peça(s) saem por ${fmtMoeda(preco)}${normal>0?` em vez de ${fmtMoeda(normal)}`:''}. Depois volta ao preço normal.`
+      : 'Informe o preço e quantas peças entram na queima.'
+}
+;['promo-ativa','promo-preco','promo-qtd','produto-venda'].forEach(id => $(id).addEventListener('input', atualizarPromoForm))
+
+function lerPromoForm() {
+  if (!$('promo-ativa').checked) return null
+  return { preco: parseFloat($('promo-preco').value), quantidade: parseInt($('promo-qtd').value), ate: $('promo-ate').value || null }
+}
+
+// Chamado quando outra tela pede um produto novo (ex.: entrada de mercadoria)
+let aoCriarProduto = null
+function novoProduto(codigo='', callback=null) {
+  $('btn-novo-produto').click()
+  if (codigo) { $('produto-codigo').value = codigo; atualizarPreviewCodigo() }
+  aoCriarProduto = callback
+}
+
 /* Novo produto */
-document.getElementById('btn-novo-produto').addEventListener('click', () => {
+$('btn-novo-produto').addEventListener('click', () => {
+  aoCriarProduto = null
   produtoEditId = null
-  document.getElementById('modal-produto-titulo').textContent = 'Novo Produto'
-  document.getElementById('form-produto').reset()
-  codigoAtual = gerarCodigoBarras()
-  renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
-  document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
-  openModal('modal-produto')
-  setTimeout(()=>document.getElementById('produto-nome').focus(), 80)
+  $('modal-produto-titulo').textContent = 'Novo produto'
+  $('form-produto').reset()
+  $('produto-codigo').value    = gerarCodigoBarras()
+  $('produto-codigo').readOnly = false
+  $('btn-gerar-codigo').style.display = ''
+  $('grupo-estoque').style.display    = ''
+  $('label-estoque').textContent      = 'Estoque inicial'
+  atualizarPreviewCodigo()
+  preencherPromo(null)
+  openModal('modal-produto', 'produto-nome')
+})
+
+$('btn-gerar-codigo').addEventListener('click', () => {
+  $('produto-codigo').value = gerarCodigoBarras()
+  atualizarPreviewCodigo()
+})
+
+$('produto-codigo').addEventListener('input', atualizarPreviewCodigo)
+
+// Leitor de código no campo do produto: Enter não deve salvar o formulário
+$('produto-codigo').addEventListener('keydown', e => {
+  if (e.key==='Enter') { e.preventDefault(); $('produto-estoque').focus() }
 })
 
 function abrirEditarProduto(id) {
   const p = todosProdutos.find(x=>x.id===id); if(!p) return
   produtoEditId = id
-  document.getElementById('modal-produto-titulo').textContent = 'Editar Produto'
-  document.getElementById('produto-nome').value    = p.nome
-  document.getElementById('produto-venda').value   = p.preco_venda
-  document.getElementById('produto-estoque').value = p.estoque
-  codigoAtual = p.codigo_barras
-  renderBarcode('#barcode-preview', codigoAtual, {height:50,fontSize:11})
-  document.getElementById('barcode-caption-texto').textContent = `Código: ${codigoAtual}`
-  openModal('modal-produto')
-  setTimeout(()=>document.getElementById('produto-nome').focus(), 80)
+  $('modal-produto-titulo').textContent = 'Editar produto'
+  $('produto-nome').value    = p.nome
+  $('produto-venda').value   = p.preco_venda
+  $('produto-estoque').value = p.estoque
+  $('produto-codigo').value  = p.codigo_barras
+  $('produto-codigo').readOnly = true
+  $('btn-gerar-codigo').style.display = 'none'
+  // Ajuste de estoque é exclusivo do administrador
+  $('grupo-estoque').style.display = isAdmin ? '' : 'none'
+  $('label-estoque').textContent   = 'Estoque'
+  atualizarPreviewCodigo()
+  preencherPromo(p)
+  openModal('modal-produto', 'produto-nome')
 }
 
-document.getElementById('form-produto').addEventListener('submit', async e => {
+$('form-produto').addEventListener('submit', async e => {
   e.preventDefault()
-  const nome      = document.getElementById('produto-nome').value.trim()
-  const preco_venda = parseFloat(document.getElementById('produto-venda').value)
-  const estoque   = parseInt(document.getElementById('produto-estoque').value) || 0
+  const nome        = $('produto-nome').value.trim()
+  const preco_venda = parseFloat($('produto-venda').value)
+  const estoque     = parseInt($('produto-estoque').value) || 0
+  const codigo      = $('produto-codigo').value.trim()
 
-  if (!nome)                        { toast('Informe o nome do produto.','error'); return }
+  if (!nome)                              { toast('Informe o nome do produto.','error'); return }
   if (isNaN(preco_venda)||preco_venda<=0) { toast('Preço de venda inválido.','error'); return }
+  if (estoque < 0)                        { toast('Estoque não pode ser negativo.','error'); return }
+  if (!produtoEditId && !codigo)          { toast('Informe o código de barras.','error'); return }
+  const promo = lerPromoForm()
+  if (promo && !(promo.preco > 0 && promo.preco < preco_venda)) { toast('O preço da queima deve ser menor que o preço normal.','error'); return }
+  if (promo && !(promo.quantidade > 0))   { toast('Informe quantas peças entram na queima.','error'); return }
 
   try {
+    let produto
     if (produtoEditId) {
-      await api.atualizarProduto(produtoEditId, { nome, preco_venda })
-      // Atualiza estoque via admin handler para manter a regra
-      await api.adminAtualizarEstoque(produtoEditId, estoque)
+      const antes = todosProdutos.find(x=>x.id===produtoEditId)
+      produto = await api.atualizarProduto(produtoEditId, { nome, preco_venda })
+      if (isAdmin) await api.adminAtualizarEstoque(produtoEditId, estoque)
+      if (promo || promoAtiva(antes)) await api.definirPromocao(produtoEditId, promo)
       toast('Produto atualizado!', 'success')
     } else {
-      await api.criarProduto({ nome, preco_venda, codigo_barras: codigoAtual, estoque })
+      produto = await api.criarProduto({ nome, preco_venda, codigo_barras: codigo, estoque })
+      if (promo) produto = await api.definirPromocao(produto.id, promo)
       toast('Produto cadastrado!', 'success')
     }
     closeModal('modal-produto')
     await carregarProdutos()
     preencherSelectEtiquetas()
-  } catch(err) { toast(`Erro: ${err.message}`, 'error') }
+    if (aoCriarProduto && !produtoEditId) { const cb = aoCriarProduto; aoCriarProduto = null; cb(produto) }
+  } catch(err) { toast(msgErro(err), 'error') }
 })
 
-async function deletarProduto(id, nome) {
-  confirmar(`Excluir o produto "${nome}"? Esta ação não pode ser desfeita.`, async () => {
+function deletarProduto(id) {
+  const p = todosProdutos.find(x=>x.id===id); if(!p) return
+  confirmar(`Excluir o produto "${p.nome}"?\nEsta ação não pode ser desfeita. As vendas já feitas continuam nos relatórios.`, async () => {
     try {
       await api.deletarProduto(id)
       toast('Produto excluído.', 'success')
       await carregarProdutos()
-    } catch(err) { toast(`Erro: ${err.message}`, 'error') }
-  })
+    } catch(err) { toast(msgErro(err), 'error') }
+  }, { titulo:'Excluir produto', botao:'Excluir' })
 }
 
 /* ============================================================
@@ -256,50 +429,70 @@ async function deletarProduto(id, nome) {
 let etiquetasSel = []
 
 function preencherSelectEtiquetas() {
-  const sel = document.getElementById('select-produto-etiqueta')
+  const sel = $('select-produto-etiqueta')
   const val = sel.value
   sel.innerHTML = '<option value="">— Selecione —</option>' +
-    todosProdutos.map(p=>`<option value="${p.id}">${escHtml(p.nome)}</option>`).join('')
+    todosProdutos.map(p=>`<option value="${p.id}">${escHtml(p.nome)} — ${fmtMoeda(p.preco_venda)}</option>`).join('')
   if (val) sel.value = val
 }
 
-document.getElementById('btn-add-etiqueta').addEventListener('click', () => {
-  const prodId = parseInt(document.getElementById('select-produto-etiqueta').value)
-  const qtd    = parseInt(document.getElementById('input-qtd-etiqueta').value) || 1
-  if (!prodId) { toast('Selecione um produto.','warn'); return }
-  const prod = todosProdutos.find(p=>p.id===prodId)
-  if (!prod) { toast('Produto não encontrado.','error'); return }
-  const existe = etiquetasSel.find(e=>e.produto.id===prodId)
+function adicionarEtiqueta(prod, qtd) {
+  const existe = etiquetasSel.find(e=>e.produto.id===prod.id)
   existe ? (existe.quantidade += qtd) : etiquetasSel.push({produto:prod, quantidade:qtd})
   renderEtiquetasLista()
   renderEtiquetasPreview()
+}
+
+function produtoSelecionadoEtiqueta() {
+  const prodId = parseInt($('select-produto-etiqueta').value)
+  if (!prodId) { toast('Selecione um produto.','warn'); return null }
+  const prod = todosProdutos.find(p=>p.id===prodId)
+  if (!prod) toast('Produto não encontrado.','error')
+  return prod || null
+}
+
+$('btn-add-etiqueta').addEventListener('click', () => {
+  const prod = produtoSelecionadoEtiqueta(); if (!prod) return
+  adicionarEtiqueta(prod, Math.max(1, parseInt($('input-qtd-etiqueta').value) || 1))
 })
 
-document.getElementById('btn-limpar-etiquetas').addEventListener('click', ()=>{
+$('btn-etiquetas-estoque').addEventListener('click', () => {
+  const prod = produtoSelecionadoEtiqueta(); if (!prod) return
+  if (prod.estoque <= 0) { toast('Este produto está sem estoque.','warn'); return }
+  adicionarEtiqueta(prod, prod.estoque)
+})
+
+$('btn-limpar-etiquetas').addEventListener('click', ()=>{
   etiquetasSel=[]; renderEtiquetasLista(); renderEtiquetasPreview()
 })
 
 function renderEtiquetasLista() {
-  const container = document.getElementById('etiquetas-lista-container')
+  const container = $('etiquetas-lista-container')
   if (!etiquetasSel.length) { container.style.display='none'; return }
   container.style.display = 'block'
-  document.getElementById('tbody-etiquetas-lista').innerHTML = etiquetasSel.map((e,i)=>`
+  $('tbody-etiquetas-lista').innerHTML = etiquetasSel.map((e,i)=>`
     <tr>
       <td>${escHtml(e.produto.nome)}</td>
       <td>${e.quantidade}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="removerEtiqueta(${i})">Remover</button></td>
+      <td style="text-align:right;"><button class="btn btn-sm btn-danger-outline" data-remover="${i}">${icon('trash')} Remover</button></td>
     </tr>`).join('')
 }
 
-function removerEtiqueta(idx) { etiquetasSel.splice(idx,1); renderEtiquetasLista(); renderEtiquetasPreview() }
+$('tbody-etiquetas-lista').addEventListener('click', e => {
+  const btn = e.target.closest('[data-remover]'); if (!btn) return
+  etiquetasSel.splice(Number(btn.dataset.remover),1)
+  renderEtiquetasLista(); renderEtiquetasPreview()
+})
 
 function renderEtiquetasPreview() {
-  const preview   = document.getElementById('etiquetas-preview')
-  const printArea = document.getElementById('print-area')
-  const infoEl    = document.getElementById('total-etiquetas-info')
+  const preview   = $('etiquetas-preview')
+  const printArea = $('print-area')
+  const infoEl    = $('total-etiquetas-info')
 
   if (!etiquetasSel.length) {
-    preview.innerHTML = `<div class="empty-state" style="padding:40px 0;width:100%;"><div class="empty-icon">🏷️</div><div>Adicione produtos para visualizar</div></div>`
+    preview.innerHTML = `<div class="empty-state" style="padding:40px 0;width:100%;">
+      <div class="empty-icon">${icon('tag')}</div>
+      <div class="empty-title">Adicione produtos para visualizar</div></div>`
     printArea.innerHTML = ''
     infoEl.textContent = ''
     return
@@ -312,9 +505,12 @@ function renderEtiquetasPreview() {
   etiquetasSel.forEach(({produto,quantidade})=>{
     for(let i=0;i<quantidade;i++){
       html += `<div class="etiqueta">
+        <div class="etiqueta-loja">Cantinho do Bebê</div>
         <div class="etiqueta-nome">${escHtml(produto.nome)}</div>
-        <svg class="etiqueta-barcode" data-codigo="${produto.codigo_barras}"></svg>
-        <div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>
+        <svg class="etiqueta-barcode" data-codigo="${escHtml(produto.codigo_barras)}"></svg>
+        ${promoAtiva(produto)
+          ? `<div class="etiqueta-de">De ${fmtMoeda(produto.preco_venda)}</div><div class="etiqueta-preco">Por ${fmtMoeda(produto.preco_promo)}</div>`
+          : `<div class="etiqueta-preco">${fmtMoeda(produto.preco_venda)}</div>`}
       </div>`
     }
   })
@@ -326,7 +522,7 @@ function renderEtiquetasPreview() {
   )
 }
 
-document.getElementById('btn-imprimir-etiquetas').addEventListener('click', ()=>{
+$('btn-imprimir-etiquetas').addEventListener('click', ()=>{
   if (!etiquetasSel.length) { toast('Selecione ao menos um produto.','warn'); return }
   window.print()
 })
@@ -334,176 +530,679 @@ document.getElementById('btn-imprimir-etiquetas').addEventListener('click', ()=>
 /* ============================================================
    CAIXA
    ============================================================ */
-function focusCaixa() {
-  document.getElementById('data-hoje').textContent =
-    new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})
-  setTimeout(()=>document.getElementById('input-barcode').focus(), 80)
+function focarScanner() {
+  setTimeout(()=>{
+    if (modalAberto()) return
+    if (!caixaAberto()) $('abertura-valor').focus()
+    else $('input-barcode').focus()
+  }, 30)
 }
 
-document.getElementById('input-barcode').addEventListener('keydown', async e=>{
-  if(e.key==='Enter'){ e.preventDefault(); await adicionarItem() }
+async function atualizarNumeroVenda() {
+  try { $('num-venda-atual').textContent = fmtNumVenda(await api.proximoNumeroVenda()) }
+  catch(e) { $('num-venda-atual').textContent = '—' }
+}
+
+/* Peças em queima saem pelo preço especial até acabar a quantidade da queima */
+function qtdNaQueima(item) { return item.promo ? Math.min(item.quantidade, item.promo.disponivel) : 0 }
+function subtotalItem(item) {
+  const q = qtdNaQueima(item)
+  return round2(q * (item.promo ? item.promo.preco : 0) + (item.quantidade - q) * item.preco_unitario)
+}
+function subtotalCarrinho() { return round2(carrinho.reduce((s,i)=>s+subtotalItem(i),0)) }
+
+/* Itens enviados para o banco: a parte em queima vira uma linha separada */
+function itensParaVenda() {
+  const lista = []
+  for (const item of carrinho) {
+    const q = qtdNaQueima(item)
+    const base = { produto_id:item.produto_id, nome:item.nome, preco_custo:item.preco_custo }
+    if (q > 0) lista.push({ ...base, quantidade:q, preco_unitario:item.promo.preco, promo:true })
+    if (item.quantidade - q > 0) lista.push({ ...base, quantidade:item.quantidade - q, preco_unitario:item.preco_unitario })
+  }
+  return lista
+}
+
+function calcDesconto(subtotal) {
+  if (!descontoCfg || !descontoCfg.valor) return 0
+  const v = descontoCfg.tipo==='percentual' ? subtotal*descontoCfg.valor/100 : descontoCfg.valor
+  return Math.min(round2(v), subtotal)
+}
+
+function totalCarrinho() { const s = subtotalCarrinho(); return round2(s - calcDesconto(s)) }
+
+$('input-barcode').addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ e.preventDefault(); adicionarItem() }
 })
-document.getElementById('btn-add-item').addEventListener('click', adicionarItem)
+
+/* Aceita "3*7891234" ou "3x7891234" para lançar várias unidades */
+function lerEntradaScanner(texto) {
+  const m = texto.match(/^(\d{1,3})\s*[*xX]\s*(.+)$/)
+  return m ? { qtd: Math.max(1, parseInt(m[1])), codigo: m[2].trim() } : { qtd: 1, codigo: texto }
+}
 
 async function adicionarItem() {
-  const input  = document.getElementById('input-barcode')
-  const codigo = input.value.trim()
-  if (!codigo) return
+  const input = $('input-barcode')
+  const texto = input.value.trim()
+  if (!texto) return
+  if (!caixaAberto()) { toast('Abra o caixa antes de vender.','warn'); return }
+  const { qtd, codigo } = lerEntradaScanner(texto)
+  // Limpa na hora: o leitor pode mandar o próximo código antes da busca terminar
+  input.value = ''
   try {
-    const prod = await api.buscarPorCodigo(codigo)
+    const prod = todosProdutos.find(p=>p.codigo_barras===codigo) || await api.buscarPorCodigo(codigo)
     if (!prod) {
+      bipe('erro')
       input.classList.add('error')
       toast(`Produto não encontrado: ${codigo}`,'error')
       setTimeout(()=>input.classList.remove('error'),600)
-      input.value = ''
+      if (!input.value) { input.value = texto; input.select() }
       return
     }
-    adicionarAoCarrinho(prod)
-    input.value = ''
-    input.focus()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+    adicionarAoCarrinho(prod, qtd)
+  } catch(err) { toast(msgErro(err),'error') }
 }
 
-/* Busca por nome */
-document.getElementById('btn-buscar-produto-nome').addEventListener('click', ()=>{
-  renderBuscaCaixa(todosProdutos)
-  openModal('modal-buscar-nome')
-  setTimeout(()=>document.getElementById('input-busca-caixa').focus(),80)
-})
-document.getElementById('input-busca-caixa').addEventListener('input', e=>{
-  const q = e.target.value.toLowerCase()
-  renderBuscaCaixa(todosProdutos.filter(p=>p.nome.toLowerCase().includes(q)))
-})
-
-function renderBuscaCaixa(lista) {
-  const tbody = document.getElementById('tbody-busca-caixa')
-  if (!lista.length) {
-    tbody.innerHTML=`<tr><td colspan="5" class="empty-state" style="padding:20px 0;">Nenhum produto encontrado</td></tr>`
-    return
+function adicionarAoCarrinho(prod, qtd=1) {
+  let idx = carrinho.findIndex(i=>i.produto_id===prod.id)
+  if (idx >= 0) {
+    carrinho[idx].quantidade += qtd
+    carrinho[idx].estoque = prod.estoque
+  } else {
+    carrinho.push({produto_id:prod.id, nome:prod.nome, codigo:prod.codigo_barras, quantidade:qtd,
+                   preco_unitario:prod.preco_venda, preco_custo:prod.preco_custo, estoque:prod.estoque,
+                   promo: promoAtiva(prod) ? { preco:prod.preco_promo, disponivel:prod.promo_qtd } : null})
+    idx = carrinho.length - 1
   }
-  tbody.innerHTML = lista.map(p=>{
-    const estOk = p.estoque > 0
-    return `<tr>
-      <td>${escHtml(p.nome)}</td>
-      <td><code>${p.codigo_barras}</code></td>
-      <td>${fmtMoeda(p.preco_venda)}</td>
-      <td>${estOk?`<span class="badge-estoque-ok">${p.estoque}</span>`:`<span class="badge-estoque-baixo">0</span>`}</td>
-      <td><button class="btn btn-sm btn-primary" onclick="adicionarDoModal(${p.id})">+ Adicionar</button></td>
-    </tr>`
-  }).join('')
-}
-
-function adicionarDoModal(id) {
-  const prod = todosProdutos.find(p=>p.id===id); if(!prod) return
-  adicionarAoCarrinho(prod)
-  closeModal('modal-buscar-nome')
-  document.getElementById('input-barcode').focus()
-}
-
-function adicionarAoCarrinho(prod) {
-  const existe = carrinho.find(i=>i.produto_id===prod.id)
-  existe
-    ? existe.quantidade++
-    : carrinho.push({produto_id:prod.id, nome:prod.nome, quantidade:1,
-                     preco_unitario:prod.preco_venda, preco_custo:prod.preco_custo})
+  ultimoIdx = idx
+  bipe('ok')
+  const item = carrinho[idx]
+  if (item.quantidade > item.estoque) {
+    toast(item.estoque > 0
+      ? `Atenção: só há ${item.estoque} em estoque de "${item.nome}".`
+      : `Atenção: "${item.nome}" está sem estoque no sistema.`, 'warn')
+  }
   renderCarrinho()
 }
 
 function renderCarrinho() {
-  const tbody   = document.getElementById('tbody-carrinho')
-  const btnFin  = document.getElementById('btn-finalizar-venda')
-  const totalEl = document.getElementById('total-venda')
-  const countEl = document.getElementById('carrinho-count')
-  const subEl   = document.getElementById('resumo-subtotal')
-  const itensEl = document.getElementById('resumo-itens')
+  const tbody    = $('tbody-carrinho')
+  const subtotal = subtotalCarrinho()
+  const desconto = calcDesconto(subtotal)
+  const total    = round2(subtotal - desconto)
+  const numItens = carrinho.reduce((s,i)=>s+i.quantidade,0)
+  const vazio    = !carrinho.length
 
-  if (!carrinho.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="5" class="empty-state" style="padding:48px 0;">
-      <div class="empty-icon">🛒</div><div>Carrinho vazio</div>
-      <div class="empty-hint">Escaneie ou busque um produto</div>
+  if (vazio) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6" class="empty-state" style="padding:70px 0 !important;">
+      <div class="empty-icon">${icon('barcode')}</div>
+      <div class="empty-title">Caixa livre</div>
+      <div class="empty-hint">Leia o código de barras de um produto para começar a venda</div>
     </td></tr>`
-    btnFin.disabled = true
-    totalEl.textContent = 'R$ 0,00'
-    countEl.textContent = '0 itens'
-    subEl.textContent   = 'R$ 0,00'
-    itensEl.textContent = '0'
-    return
+  } else {
+    tbody.innerHTML = carrinho.map((item,idx)=>{
+      const sub = subtotalItem(item)
+      const q = qtdNaQueima(item)
+      const semEstoque = item.quantidade > item.estoque
+      return `<tr class="${idx===ultimoIdx?'ultimo':''}">
+        <td class="item-num">${String(idx+1).padStart(3,'0')}</td>
+        <td>
+          <div class="item-nome">${escHtml(item.nome)}${semEstoque?`<span class="item-alerta" title="Quantidade maior que o estoque cadastrado">${icon('alert')} estoque: ${item.estoque}</span>`:''}</div>
+          <div class="item-cod">${escHtml(item.codigo||'')}
+            ${q?`<span class="badge-queima">Queima: ${q} × ${fmtMoeda(item.promo.preco)}${item.quantidade>q?` · ${item.quantidade-q} no preço normal`:''}</span>`:''}</div>
+        </td>
+        <td>
+          <div class="qty-control">
+            <button class="btn-xs" data-qtd="${idx}" data-delta="-1" title="Diminuir">${icon('minus')}</button>
+            <span class="qty-num">${item.quantidade}</span>
+            <button class="btn-xs" data-qtd="${idx}" data-delta="1" title="Aumentar">${icon('plus')}</button>
+          </div>
+        </td>
+        <td class="num">${q?`<span class="preco-de">${fmtMoeda(item.preco_unitario)}</span>${fmtMoeda(item.promo.preco)}`:fmtMoeda(item.preco_unitario)}</td>
+        <td class="num"><strong>${fmtMoeda(sub)}</strong></td>
+        <td><button class="btn-xs danger" data-remover="${idx}" title="Remover item">${icon('x')}</button></td>
+      </tr>`
+    }).join('')
+    const linha = tbody.querySelector('tr.ultimo')
+    if (linha) linha.scrollIntoView({block:'nearest'})
   }
 
-  let total=0, numItens=0
-  tbody.innerHTML = carrinho.map((item,idx)=>{
-    const sub = item.quantidade * item.preco_unitario
-    total    += sub
-    numItens += item.quantidade
-    return `<tr>
-      <td><strong>${escHtml(item.nome)}</strong></td>
-      <td>
-        <div class="qty-control">
-          <button class="btn-xs" onclick="alterarQtd(${idx},-1)">−</button>
-          <span class="qty-num">${item.quantidade}</span>
-          <button class="btn-xs" onclick="alterarQtd(${idx},+1)">+</button>
-        </div>
-      </td>
-      <td>${fmtMoeda(item.preco_unitario)}</td>
-      <td><strong>${fmtMoeda(sub)}</strong></td>
-      <td><button class="btn-xs" style="color:var(--danger);" onclick="removerDoCarrinho(${idx})">✕</button></td>
-    </tr>`
-  }).join('')
+  // Painel lateral
+  const ultimo = carrinho[ultimoIdx]
+  $('ultimo-nome').textContent  = ultimo ? ultimo.nome : '—'
+  const qQueima = ultimo ? qtdNaQueima(ultimo) : 0
+  $('ultimo-qtd').textContent   = !ultimo ? ''
+    : qQueima && qQueima < ultimo.quantidade ? `${ultimo.quantidade} un. (${qQueima} na queima)`
+    : `${ultimo.quantidade} × ${fmtMoeda(qQueima ? ultimo.promo.preco : ultimo.preco_unitario)}`
+  $('ultimo-preco').textContent = ultimo ? fmtMoeda(subtotalItem(ultimo)) : ''
 
-  totalEl.textContent = fmtMoeda(total)
-  subEl.textContent   = fmtMoeda(total)
-  countEl.textContent = `${numItens} ${numItens!==1?'itens':'item'}`
-  itensEl.textContent = numItens
-  btnFin.disabled     = false
+  $('resumo-itens').textContent    = numItens
+  $('resumo-subtotal').textContent = fmtMoeda(subtotal)
+  $('resumo-desconto').textContent = desconto
+    ? `− ${fmtMoeda(desconto)}${descontoCfg.tipo==='percentual'?` (${descontoCfg.valor}%)`:''}`
+    : 'R$ 0,00'
+  document.querySelector('.resumo-desconto').classList.toggle('ativo', desconto>0)
+  $('total-venda').textContent     = fmtMoeda(total)
+  $('carrinho-count').textContent  = `${numItens} ${numItens!==1?'itens':'item'}`
+
+  $('pdv-status').classList.toggle('ocupado', !vazio)
+  $('pdv-status').classList.toggle('fechado', !caixaAberto())
+  $('pdv-status-text').textContent = !caixaAberto() ? 'CAIXA FECHADO' : vazio ? 'CAIXA LIVRE' : 'VENDA EM ANDAMENTO'
+
+  ;['btn-finalizar-venda','btn-desconto','btn-remover-ultimo','btn-cancelar-venda']
+    .forEach(id => $(id).disabled = vazio)
 }
+
+$('tbody-carrinho').addEventListener('click', e => {
+  const qtdBtn = e.target.closest('[data-qtd]')
+  const remBtn = e.target.closest('[data-remover]')
+  if (qtdBtn) alterarQtd(Number(qtdBtn.dataset.qtd), Number(qtdBtn.dataset.delta))
+  if (remBtn) removerDoCarrinho(Number(remBtn.dataset.remover))
+  focarScanner()
+})
 
 function alterarQtd(idx, delta) {
-  carrinho[idx].quantidade += delta
-  if (carrinho[idx].quantidade<=0) carrinho.splice(idx,1)
+  const item = carrinho[idx]; if (!item) return
+  item.quantidade += delta
+  ultimoIdx = idx
+  if (item.quantidade<=0) { removerDoCarrinho(idx); return }
+  if (delta>0 && item.quantidade>item.estoque) toast(`Atenção: só há ${Math.max(item.estoque,0)} em estoque.`, 'warn')
   renderCarrinho()
 }
-function removerDoCarrinho(idx) { carrinho.splice(idx,1); renderCarrinho() }
 
-/* Finalizar → abre modal de pagamento */
-document.getElementById('btn-finalizar-venda').addEventListener('click', ()=>{
+function removerDoCarrinho(idx) {
+  carrinho.splice(idx,1)
+  ultimoIdx = carrinho.length - 1
+  if (!carrinho.length) descontoCfg = null
+  renderCarrinho()
+}
+
+function removerUltimoItem() {
   if (!carrinho.length) return
-  const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
-  document.getElementById('pagamento-total-valor').textContent = fmtMoeda(total)
+  const idx  = ultimoIdx>=0 && ultimoIdx<carrinho.length ? ultimoIdx : carrinho.length-1
+  const item = carrinho[idx]
+  if (item.quantidade > 1) { item.quantidade--; renderCarrinho() }
+  else removerDoCarrinho(idx)
+  toast(`Retirado: ${item.nome}`)
+}
+
+$('btn-remover-ultimo').addEventListener('click', ()=>{ removerUltimoItem(); focarScanner() })
+
+function cancelarVendaAtual() {
+  if (!carrinho.length) return
+  confirmar('Cancelar a venda em andamento?\nTodos os itens lançados serão removidos.', ()=>{
+    carrinho = []; ultimoIdx = -1; descontoCfg = null
+    renderCarrinho(); toast('Venda cancelada.')
+    focarScanner()
+  }, { titulo:'Cancelar venda', botao:'Cancelar venda' })
+}
+$('btn-cancelar-venda').addEventListener('click', cancelarVendaAtual)
+
+/* Busca por nome (F2) */
+let aoEscolherBusca = null
+function abrirBusca(callback=null) {
+  aoEscolherBusca = callback
+  $('input-busca-caixa').value = ''
+  filtrarBusca()
+  openModal('modal-buscar-nome', 'input-busca-caixa')
+}
+$('btn-buscar-produto-nome').addEventListener('click', ()=>abrirBusca())
+
+function filtrarBusca() {
+  const q = $('input-busca-caixa').value.trim().toLowerCase()
+  buscaLista = todosProdutos.filter(p=>!q || p.nome.toLowerCase().includes(q) || p.codigo_barras.includes(q))
+  buscaSelIdx = 0
+  renderBuscaCaixa()
+}
+$('input-busca-caixa').addEventListener('input', filtrarBusca)
+
+$('input-busca-caixa').addEventListener('keydown', e=>{
+  if (e.key==='ArrowDown') { e.preventDefault(); buscaSelIdx = Math.min(buscaSelIdx+1, buscaLista.length-1); renderBuscaCaixa() }
+  if (e.key==='ArrowUp')   { e.preventDefault(); buscaSelIdx = Math.max(buscaSelIdx-1, 0); renderBuscaCaixa() }
+  if (e.key==='Enter' && buscaLista[buscaSelIdx]) { e.preventDefault(); adicionarDoModal(buscaLista[buscaSelIdx].id) }
+})
+
+function renderBuscaCaixa() {
+  const tbody = $('tbody-busca-caixa')
+  if (!buscaLista.length) {
+    tbody.innerHTML = linhaVazia(5, 'search', 'Nenhum produto encontrado')
+    return
+  }
+  tbody.innerHTML = buscaLista.map((p,i)=>`<tr class="${i===buscaSelIdx?'ultimo':''}" data-add="${p.id}" style="cursor:pointer;">
+      <td><strong>${escHtml(p.nome)}</strong></td>
+      <td><code>${escHtml(p.codigo_barras)}</code></td>
+      <td class="num">${fmtMoeda(p.preco_venda)}</td>
+      <td class="ctr">${badgeEstoque(p.estoque)}</td>
+      <td style="text-align:right;"><button class="btn btn-sm btn-primary" data-add="${p.id}">${icon('plus')} Adicionar</button></td>
+    </tr>`).join('')
+  const sel = tbody.querySelector('tr.ultimo')
+  if (sel) sel.scrollIntoView({block:'nearest'})
+}
+
+$('tbody-busca-caixa').addEventListener('click', e => {
+  const el = e.target.closest('[data-add]'); if (el) adicionarDoModal(Number(el.dataset.add))
+})
+
+function adicionarDoModal(id) {
+  const prod = todosProdutos.find(p=>p.id===id); if(!prod) return
+  closeModal('modal-buscar-nome')
+  if (aoEscolherBusca) { const cb = aoEscolherBusca; aoEscolherBusca = null; cb(prod); return }
+  if (!caixaAberto()) { toast('Abra o caixa antes de vender.','warn'); return }
+  adicionarAoCarrinho(prod)
+  focarScanner()
+}
+
+/* Desconto (F4) */
+function abrirDesconto() {
+  if (!carrinho.length) return
+  setTipoDesconto(descontoCfg ? descontoCfg.tipo : 'valor')
+  $('desconto-valor').value = descontoCfg ? descontoCfg.valor : ''
+  atualizarPreviewDesconto()
+  openModal('modal-desconto', 'desconto-valor')
+}
+$('btn-desconto').addEventListener('click', abrirDesconto)
+
+let tipoDesconto = 'valor'
+function setTipoDesconto(tipo) {
+  tipoDesconto = tipo
+  document.querySelectorAll('#desconto-tipo .seg').forEach(s=>s.classList.toggle('active', s.dataset.tipo===tipo))
+  $('desconto-label').textContent = tipo==='percentual' ? 'Percentual de desconto (%)' : 'Valor do desconto (R$)'
+  atualizarPreviewDesconto()
+}
+document.querySelectorAll('#desconto-tipo .seg').forEach(s =>
+  s.addEventListener('click', ()=>{ setTipoDesconto(s.dataset.tipo); $('desconto-valor').focus() })
+)
+
+function lerDescontoDigitado() {
+  const v = parseFloat($('desconto-valor').value)
+  if (isNaN(v) || v < 0) return null
+  if (tipoDesconto==='percentual' && v > 100) return null
+  return { tipo: tipoDesconto, valor: round2(v) }
+}
+
+function atualizarPreviewDesconto() {
+  const subtotal = subtotalCarrinho()
+  const cfg = lerDescontoDigitado()
+  const salvo = descontoCfg; descontoCfg = cfg
+  const desc = calcDesconto(subtotal)
+  descontoCfg = salvo
+  $('desconto-preview').innerHTML = cfg === null && $('desconto-valor').value !== ''
+    ? '<span class="negative">Valor inválido.</span>'
+    : `Subtotal: <strong>${fmtMoeda(subtotal)}</strong><br>
+       Desconto: <strong>− ${fmtMoeda(desc)}</strong><br>
+       Total com desconto: <strong>${fmtMoeda(subtotal-desc)}</strong>`
+}
+$('desconto-valor').addEventListener('input', atualizarPreviewDesconto)
+$('desconto-valor').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); aplicarDesconto() } })
+
+function aplicarDesconto() {
+  const cfg = lerDescontoDigitado()
+  if (!cfg) { toast('Desconto inválido.','error'); return }
+  if (cfg.tipo==='valor' && cfg.valor > subtotalCarrinho()) { toast('Desconto maior que o subtotal.','error'); return }
+  descontoCfg = cfg.valor ? cfg : null
+  closeModal('modal-desconto')
+  renderCarrinho()
+  if (descontoCfg) toast(`Desconto aplicado: ${fmtMoeda(calcDesconto(subtotalCarrinho()))}`,'success')
+}
+$('btn-aplicar-desconto').addEventListener('click', aplicarDesconto)
+$('btn-remover-desconto').addEventListener('click', ()=>{
+  descontoCfg = null; closeModal('modal-desconto'); renderCarrinho()
+})
+
+/* ============================================================
+   PAGAMENTO (pode ser dividido em mais de uma forma)
+   ============================================================ */
+const pag = { lancados: [], forma: null, cliente: null, vale: null }
+let valePendente = null   // vale-troca gerado na tela de Trocas para usar nesta venda
+let clientesCache = []
+
+const pagoAteAgora = () => round2(pag.lancados.reduce((s,p)=>s+p.valor,0))
+const faltaPagar   = () => round2(totalCarrinho() - pagoAteAgora())
+
+async function abrirPagamento() {
+  if (!carrinho.length) return
+  pag.lancados = []; pag.forma = null; pag.cliente = null; pag.vale = null
+  document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.remove('selecionado'))
+  document.querySelectorAll('.pag-painel').forEach(p=>p.classList.remove('ativo'))
+  ;['valor-recebido','valor-cartao','pag-autorizacao','fiado-busca','valor-fiado','vale-codigo','valor-vale'].forEach(id=>$(id).value='')
+  $('vale-info').innerHTML = ''
+  $('pag-parcelas').innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">${i===0?'À vista':`${i+1}x`}</option>`).join('')
+  renderPagamento()
+  // Sem foco em campo, as teclas 1–6 escolhem a forma de pagamento
   openModal('modal-pagamento')
+  try { clientesCache = await api.listarClientes() } catch(e) { clientesCache = [] }
+  if (valePendente) { selecionarPagamento('vale'); $('vale-codigo').value = valePendente; await carregarVale() }
+}
+$('btn-finalizar-venda').addEventListener('click', abrirPagamento)
+
+function renderPagamento() {
+  const falta = faltaPagar()
+  $('pagamento-total-valor').textContent = fmtMoeda(totalCarrinho())
+  $('pagamento-pago').textContent  = fmtMoeda(pagoAteAgora())
+  $('pagamento-falta').textContent = fmtMoeda(Math.max(falta,0))
+  document.querySelector('.pag-falta').classList.toggle('quitado', falta <= 0)
+  $('pag-lancados').innerHTML = pag.lancados.map((p,i)=>`
+    <div class="pag-lancado">${icon(PAGAMENTO_ICON[p.forma])} ${PAGAMENTO_LABEL[p.forma]}
+      ${p.descricao?`<small>${escHtml(p.descricao)}</small>`:''}
+      <strong>${fmtMoeda(p.valor)}</strong>
+      <button data-remover-pag="${i}" title="Remover">${icon('x')}</button>
+    </div>`).join('')
+  atualizarBotaoPagamento()
+}
+
+$('pag-lancados').addEventListener('click', e=>{
+  const b = e.target.closest('[data-remover-pag]'); if (!b) return
+  pag.lancados.splice(Number(b.dataset.removerPag),1)
+  renderPagamento()
 })
 
-/* Botões de pagamento */
-document.querySelectorAll('.pagamento-btn').forEach(btn=>{
-  btn.addEventListener('click', async ()=>{
-    const pagamento = btn.dataset.pag
-    const total = carrinho.reduce((s,i)=>s+i.quantidade*i.preco_unitario,0)
-    try {
-      ultimaVendaId = await api.finalizarVenda({itens:carrinho, total, pagamento})
-      document.getElementById('venda-ok-total').textContent = fmtMoeda(total)
-      document.getElementById('venda-ok-pagamento').textContent = PAGAMENTO_LABEL[pagamento]||pagamento
-      closeModal('modal-pagamento')
-      carrinho = []
-      renderCarrinho()
-      await carregarProdutos()
-      openModal('modal-venda-ok')
-    } catch(err) { toast(`Erro ao finalizar: ${err.message}`,'error') }
+function selecionarPagamento(forma) {
+  if (faltaPagar() <= 0) return
+  if (forma==='dinheiro' && pag.lancados.some(p=>p.forma==='dinheiro')) { toast('O dinheiro já foi lançado.','warn'); return }
+  pag.forma = forma
+  document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.toggle('selecionado', b.dataset.pag===forma))
+  const painel = ['pix','debito','credito'].includes(forma) ? 'cartao' : forma
+  document.querySelectorAll('.pag-painel').forEach(p=>p.classList.toggle('ativo', p.dataset.painel===painel))
+  const falta = faltaPagar()
+
+  if (forma==='dinheiro') {
+    montarNotasRapidas(falta)
+    $('valor-recebido').value = ''
+    $('valor-recebido').focus()
+  }
+  if (painel==='cartao') {
+    $('valor-cartao').value = falta.toFixed(2)
+    $('pag-autorizacao').value = ''
+    $('pag-parcelas').value = '1'
+    $('grupo-parcelas').style.display = forma==='credito' ? '' : 'none'
+    $('maquininha-forma').textContent = forma==='pix' ? '(PIX)' : forma==='debito' ? 'no débito' : 'no crédito'
+    $('valor-cartao').focus(); $('valor-cartao').select()
+  }
+  if (forma==='fiado') {
+    $('valor-fiado').value = falta.toFixed(2)
+    renderListaFiado()
+    if (pag.cliente) $('valor-fiado').focus(); else $('fiado-busca').focus()
+  }
+  if (forma==='vale') {
+    $('vale-codigo').focus()
+    if (pag.vale) $('valor-vale').value = Math.min(pag.vale.saldo, falta).toFixed(2)
+  }
+  atualizarBotaoPagamento()
+}
+
+document.querySelectorAll('.pagamento-btn').forEach(btn=>
+  btn.addEventListener('click', ()=>selecionarPagamento(btn.dataset.pag))
+)
+
+function montarNotasRapidas(valor) {
+  const sugestoes = [valor]
+  ;[5,10,20,50,100].forEach(n=>{
+    const v = Math.ceil(valor/n)*n
+    if (v > valor && !sugestoes.includes(v)) sugestoes.push(v)
+  })
+  $('notas-rapidas').innerHTML = sugestoes.slice(0,5).map((v,i)=>
+    `<button class="btn btn-sm btn-secondary" data-valor="${v}">${i===0?'Valor exato':fmtMoeda(v)}</button>`).join('')
+}
+
+$('notas-rapidas').addEventListener('click', e=>{
+  const b = e.target.closest('[data-valor]'); if (!b) return
+  $('valor-recebido').value = Number(b.dataset.valor).toFixed(2)
+  atualizarBotaoPagamento()
+  $('valor-recebido').focus()
+})
+
+$('valor-cartao').addEventListener('input', ()=>{ atualizarMaquininha(); atualizarBotaoPagamento() })
+function atualizarMaquininha() { $('maquininha-valor').textContent = fmtMoeda(parseFloat($('valor-cartao').value)||0) }
+
+/* Lê o painel da forma escolhida e devolve o pagamento a lançar (ou o motivo de não poder) */
+function pagamentoDigitado() {
+  const falta = faltaPagar()
+  const f = pag.forma
+  if (!f) return { erro: 'Escolha a forma de pagamento.' }
+  if (f==='dinheiro') {
+    const txt = $('valor-recebido').value
+    const recebido = txt==='' ? falta : round2(parseFloat(txt))
+    if (isNaN(recebido) || recebido <= 0) return { erro: 'Valor recebido inválido.' }
+    const valor = Math.min(recebido, falta)
+    return { forma:f, valor, recebido, troco: round2(recebido - valor),
+             descricao: recebido > valor ? `recebido ${fmtMoeda(recebido)}` : '' }
+  }
+  if (['pix','debito','credito'].includes(f)) {
+    const valor = round2(parseFloat($('valor-cartao').value))
+    if (!(valor > 0)) return { erro: 'Valor inválido.' }
+    if (valor > falta + 0.001) return { erro: `No ${PAGAMENTO_LABEL[f]} o valor não pode passar de ${fmtMoeda(falta)}.` }
+    const parcelas = f==='credito' ? parseInt($('pag-parcelas').value) : 1
+    const aut = $('pag-autorizacao').value.trim()
+    const partes = [parcelas>1?`${parcelas}x`:'', aut?`aut. ${aut}`:''].filter(Boolean)
+    return { forma:f, valor, detalhe: partes.join(' · ') || null, descricao: partes.join(' · ') }
+  }
+  if (f==='fiado') {
+    if (!pag.cliente) return { erro: 'Escolha o cliente do fiado.' }
+    const valor = round2(parseFloat($('valor-fiado').value))
+    if (!(valor > 0) || valor > falta + 0.001) return { erro: 'Valor do fiado inválido.' }
+    return { forma:f, valor, descricao: pag.cliente.nome }
+  }
+  if (f==='vale') {
+    if (!pag.vale) return { erro: 'Leia o código do vale-troca.' }
+    if (pag.lancados.some(p=>p.forma==='vale' && p.detalhe===pag.vale.codigo)) return { erro: 'Este vale já foi lançado.' }
+    const valor = round2(parseFloat($('valor-vale').value))
+    if (!(valor > 0)) return { erro: 'Valor do vale inválido.' }
+    if (valor > pag.vale.saldo + 0.001) return { erro: `O vale tem só ${fmtMoeda(pag.vale.saldo)}.` }
+    if (valor > falta + 0.001) return { erro: `O valor não pode passar de ${fmtMoeda(falta)}.` }
+    return { forma:f, valor, detalhe: pag.vale.codigo, descricao: pag.vale.codigo }
+  }
+}
+
+function atualizarBotaoPagamento() {
+  const btn = $('btn-confirmar-pagamento')
+  const falta = faltaPagar()
+  const p = falta > 0 ? pagamentoDigitado() : null
+  const fecha = falta <= 0 || (p && !p.erro && p.valor >= falta - 0.001)
+  btn.disabled = falta > 0 && (!p || !!p.erro)
+  $('btn-confirmar-texto').textContent = fecha ? 'Confirmar venda' : 'Lançar e continuar'
+
+  // Troco (dinheiro)
+  if (pag.forma==='dinheiro') {
+    const row = document.querySelector('[data-painel="dinheiro"] .troco-row')
+    if (p && !p.erro) {
+      const restante = round2(falta - p.valor)
+      row.classList.toggle('falta', restante > 0)
+      row.firstElementChild.textContent = restante > 0 ? 'Falta (pague o resto em outra forma)' : 'Troco'
+      $('troco-valor').textContent = fmtMoeda(restante > 0 ? restante : p.troco)
+    } else {
+      row.classList.add('falta'); row.firstElementChild.textContent = 'Valor inválido'; $('troco-valor').textContent = '—'
+    }
+  }
+  if (['pix','debito','credito'].includes(pag.forma)) atualizarMaquininha()
+}
+;['valor-recebido','valor-fiado','valor-vale','pag-parcelas'].forEach(id=>$(id).addEventListener('input', atualizarBotaoPagamento))
+
+// Enter em qualquer campo do pagamento lança/confirma
+;['valor-recebido','valor-cartao','pag-autorizacao','valor-fiado','valor-vale'].forEach(id=>
+  $(id).addEventListener('keydown', e=>{ if (e.key==='Enter') { e.preventDefault(); confirmarPagamento() } })
+)
+
+/* Fiado: escolha do cliente */
+function renderListaFiado() {
+  const q = $('fiado-busca').value.trim().toLowerCase()
+  const lista = clientesCache.filter(c => !q || c.nome.toLowerCase().includes(q) || (c.telefone||'').includes(q)).slice(0, 30)
+  $('fiado-lista').innerHTML = !lista.length
+    ? `<div class="side-vazio">Nenhum cliente encontrado. Use "Novo" para cadastrar.</div>`
+    : lista.map(c=>`<button class="fiado-item ${pag.cliente&&pag.cliente.id===c.id?'selecionado':''}" data-cliente="${c.id}">
+        <span><strong>${escHtml(c.nome)}</strong> <small>${escHtml(c.telefone||'')}</small></span>
+        <small>${c.saldo>0?`deve ${fmtMoeda(c.saldo)}`:'sem débito'}</small>
+      </button>`).join('')
+}
+$('fiado-busca').addEventListener('input', renderListaFiado)
+$('fiado-busca').addEventListener('keydown', e=>{
+  if (e.key!=='Enter') return
+  e.preventDefault()
+  const primeiro = $('fiado-lista').querySelector('[data-cliente]')
+  if (primeiro) primeiro.click()
+})
+$('fiado-lista').addEventListener('click', e=>{
+  const b = e.target.closest('[data-cliente]'); if (!b) return
+  pag.cliente = clientesCache.find(c=>c.id===Number(b.dataset.cliente))
+  $('fiado-busca').value = pag.cliente.nome
+  renderListaFiado()
+  atualizarBotaoPagamento()
+  $('valor-fiado').focus(); $('valor-fiado').select()
+})
+$('btn-fiado-novo-cliente').addEventListener('click', ()=>{
+  abrirCadastroCliente(null, async cliente => {
+    clientesCache = await api.listarClientes()
+    pag.cliente = clientesCache.find(c=>c.id===cliente.id)
+    $('fiado-busca').value = cliente.nome
+    renderListaFiado(); atualizarBotaoPagamento()
+    $('valor-fiado').focus()
   })
 })
 
-document.getElementById('btn-nova-venda').addEventListener('click', ()=>{
-  closeModal('modal-venda-ok')
-  document.getElementById('input-barcode').focus()
+/* Vale-troca */
+async function carregarVale() {
+  const codigo = $('vale-codigo').value.trim()
+  pag.vale = null
+  if (!codigo) { $('vale-info').innerHTML = ''; atualizarBotaoPagamento(); return }
+  const vale = await api.buscarVale(codigo)
+  if (!vale) {
+    $('vale-info').innerHTML = '<span class="negative">Vale-troca não encontrado.</span>'
+  } else if (vale.saldo <= 0) {
+    $('vale-info').innerHTML = `<span class="negative">O vale ${escHtml(vale.codigo)} já foi totalmente usado.</span>`
+  } else {
+    pag.vale = vale
+    $('vale-info').innerHTML = `<span class="positive">Vale ${escHtml(vale.codigo)}</span> — saldo <strong>${fmtMoeda(vale.saldo)}</strong>${vale.cliente_nome?` · ${escHtml(vale.cliente_nome)}`:''}`
+    $('valor-vale').value = Math.min(vale.saldo, faltaPagar()).toFixed(2)
+    $('valor-vale').focus(); $('valor-vale').select()
+  }
+  atualizarBotaoPagamento()
+}
+$('vale-codigo').addEventListener('keydown', e=>{ if (e.key==='Enter') { e.preventDefault(); carregarVale() } })
+$('vale-codigo').addEventListener('change', carregarVale)
+
+$('btn-confirmar-pagamento').addEventListener('click', confirmarPagamento)
+
+async function confirmarPagamento() {
+  if (finalizando) return
+  if (faltaPagar() > 0) {
+    const p = pagamentoDigitado()
+    if (!p || p.erro) { if (p) toast(p.erro,'error'); return }
+    pag.lancados.push(p)
+    pag.forma = null
+    document.querySelectorAll('.pagamento-btn').forEach(b=>b.classList.remove('selecionado'))
+    document.querySelectorAll('.pag-painel').forEach(x=>x.classList.remove('ativo'))
+    renderPagamento()
+    if (faltaPagar() > 0) {
+      toast(`Lançado. Falta ${fmtMoeda(faltaPagar())} — escolha a próxima forma.`)
+      if (document.activeElement) document.activeElement.blur()
+      return
+    }
+  }
+  await finalizarVendaAtual()
+}
+
+async function finalizarVendaAtual() {
+  finalizando = true
+  const subtotal = subtotalCarrinho()
+  const dinheiro = pag.lancados.find(p=>p.forma==='dinheiro')
+  const fiado    = pag.lancados.some(p=>p.forma==='fiado')
+  try {
+    const venda = await api.finalizarVenda({
+      itens:      itensParaVenda(),
+      desconto:   calcDesconto(subtotal),
+      pagamentos: pag.lancados.map(p=>({ forma:p.forma, valor:p.valor, detalhe:p.detalhe||null, recebido:p.recebido })),
+      cliente_id: fiado && pag.cliente ? pag.cliente.id : null
+    })
+    ultimaVendaId = venda.id
+    $('venda-ok-numero').textContent    = `Venda nº ${fmtNumVenda(venda.id)}`
+    $('venda-ok-total').textContent     = fmtMoeda(venda.total)
+    const formas = [...new Set(pag.lancados.map(p=>p.forma))]
+    $('venda-ok-pagamento').textContent = formas.map(f=>PAGAMENTO_LABEL[f]).join(' + ') || '—'
+    $('venda-ok-troco-box').style.display = dinheiro ? 'flex' : 'none'
+    $('venda-ok-troco').textContent = fmtMoeda(venda.troco||0)
+    if (fiado) {
+      const det = await api.detalhesVenda(venda.id)
+      $('venda-ok-fiado').innerHTML = `Fiado para <strong>${escHtml(pag.cliente.nome)}</strong>.<br>Saldo devedor agora: <strong>${fmtMoeda(det.saldoCliente)}</strong>. Imprima o comprovante para o cliente assinar.`
+    }
+    $('venda-ok-fiado').style.display = fiado ? 'block' : 'none'
+    if (pag.lancados.some(p=>p.forma==='vale')) valePendente = null
+
+    $('modal-pagamento').classList.remove('open')
+    carrinho = []; ultimoIdx = -1; descontoCfg = null
+    renderCarrinho(); renderValeBanner()
+    openModal('modal-venda-ok', 'btn-nova-venda')
+    await carregarProdutos()
+    await atualizarNumeroVenda()
+  } catch(err) {
+    toast(`Erro ao finalizar: ${msgErro(err)}`,'error')
+  } finally {
+    finalizando = false
+  }
+}
+
+function renderValeBanner() {
+  const el = $('vale-banner')
+  el.style.display = valePendente ? 'flex' : 'none'
+  if (valePendente) el.innerHTML = `${icon('ticket')} Vale-troca <strong>${escHtml(valePendente)}</strong> será usado no pagamento desta venda.
+    <button class="link-btn" id="btn-vale-descartar">não usar agora</button>`
+}
+$('vale-banner').addEventListener('click', e=>{
+  if (e.target.closest('#btn-vale-descartar')) { valePendente = null; renderValeBanner(); focarScanner() }
 })
 
-document.getElementById('btn-gerar-comprovante').addEventListener('click', ()=> gerarComprovante(ultimaVendaId))
-document.getElementById('btn-comprovante-detalhe').addEventListener('click', ()=> gerarComprovante(detalheVendaId))
+$('btn-nova-venda').addEventListener('click', ()=>closeModal('modal-venda-ok'))
+$('btn-gerar-comprovante').addEventListener('click', ()=> gerarComprovante(ultimaVendaId))
+$('btn-comprovante-detalhe').addEventListener('click', ()=> gerarComprovante(detalheVendaId))
 
-document.getElementById('btn-cancelar-venda').addEventListener('click', ()=>{
-  if (!carrinho.length) { toast('Carrinho já está vazio.'); return }
-  confirmar('Deseja cancelar a venda? Todos os itens serão removidos.', ()=>{
-    carrinho = []; renderCarrinho(); toast('Venda cancelada.')
-    document.getElementById('input-barcode').focus()
-  })
+$('btn-atalhos').addEventListener('click', ()=>openModal('modal-atalhos'))
+
+// Clicar em área vazia do caixa devolve o foco ao leitor
+$('section-caixa').addEventListener('click', e=>{
+  if (!e.target.closest('input, button, select, a')) focarScanner()
+})
+
+/* ============================================================
+   TECLADO
+   ============================================================ */
+document.addEventListener('keydown', e => {
+  const modal = modalAberto()
+  const emCampo = e.target.matches('input, textarea, select')
+
+  if (e.key==='F1') { e.preventDefault(); if (!modal) navigateTo('caixa'); return }
+
+  if (e.key==='Escape' && modal) { e.preventDefault(); closeModal(modal); return }
+
+  if (modal==='modal-pagamento') {
+    const mapa = { '1':'dinheiro', '2':'pix', '3':'debito', '4':'credito', '5':'fiado', '6':'vale' }
+    if (!emCampo && mapa[e.key]) { e.preventDefault(); selecionarPagamento(mapa[e.key]); return }
+    if (e.key==='Enter' && !emCampo) { e.preventDefault(); confirmarPagamento(); return }
+    return
+  }
+  if (modal==='modal-venda-ok') {
+    if (e.key==='Enter')                { e.preventDefault(); closeModal('modal-venda-ok') }
+    if (e.key==='p' || e.key==='P')     { e.preventDefault(); gerarComprovante(ultimaVendaId) }
+    return
+  }
+  // Enter numa caixa de marcar também confirma o modal
+  const primario = { 'modal-receber':'btn-confirmar-receber', 'modal-movimento':'btn-salvar-movimento',
+                     'modal-fechar-caixa':'btn-confirmar-fechamento' }[modal]
+  if (primario && e.key==='Enter' && e.target.type==='checkbox') { e.preventDefault(); $(primario).click(); return }
+  if (modal) return
+
+  if (secaoAtiva()!=='caixa') return
+  if (!caixaAberto()) return
+
+  if (e.key==='F2')  { e.preventDefault(); abrirBusca(); return }
+  if (e.key==='F4')  { e.preventDefault(); abrirDesconto(); return }
+  if (e.key==='F8')  { e.preventDefault(); cancelarVendaAtual(); return }
+  if (e.key==='F10') { e.preventDefault(); abrirPagamento(); return }
+  if (e.key==='Delete' && (!emCampo || (e.target.id==='input-barcode' && !e.target.value))) {
+    e.preventDefault(); removerUltimoItem(); return
+  }
+
+  // Leitor de código digitando fora do campo: redireciona para o campo
+  if (!emCampo && e.key.length===1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    $('input-barcode').focus()
+  }
 })
 
 /* ============================================================
@@ -514,9 +1213,11 @@ document.querySelectorAll('.tab-btn[data-tab]').forEach(btn=>{
     document.querySelectorAll('.tab-btn[data-tab]').forEach(b=>b.classList.remove('active'))
     document.querySelectorAll('.tab-pane[id^="tab-"]').forEach(p=>p.classList.remove('active'))
     btn.classList.add('active')
-    document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active')
+    $(`tab-${btn.dataset.tab}`).classList.add('active')
     if(btn.dataset.tab==='hoje')   carregarHoje()
     if(btn.dataset.tab==='mensal') carregarMensal()
+    if(btn.dataset.tab==='caixas') carregarCaixas()
+    if(btn.dataset.tab==='anual')  carregarAnual()
   })
 })
 
@@ -527,189 +1228,185 @@ function initDateSelectors() {
   const mesOpts = MESES_PT.slice(1).map((m,i)=>`<option value="${i+1}"${i+1===mesA?' selected':''}>${m}</option>`).join('')
   const anoOpts = anos.map(a=>`<option value="${a}"${a===anoA?' selected':''}>${a}</option>`).join('')
 
-  ;['sel-mes-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=mesOpts })
-  ;['sel-ano-mensal'].forEach(id=>{ document.getElementById(id).innerHTML=anoOpts })
+  ;['sel-mes-mensal','admin-sel-mes-lucro','admin-sel-mes-estornos','sel-mes-caixas','merc-sel-mes'].forEach(id=>{ $(id).innerHTML=mesOpts })
+  ;['sel-ano-mensal','admin-sel-ano-lucro','admin-sel-ano-estornos','sel-ano-caixas','merc-sel-ano','sel-ano-anual'].forEach(id=>{ $(id).innerHTML=anoOpts })
+}
 
-  // Admin selectors
-  ;['admin-sel-mes-lucro','admin-sel-mes-estornos'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=mesOpts })
-  ;['admin-sel-ano-lucro','admin-sel-ano-estornos'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=anoOpts })
+function statsVendas(totais) {
+  const ticket = totais.num_vendas>0 ? totais.total_vendas/totais.num_vendas : 0
+  return `
+    <div class="stat-card c-purple"><span class="stat-label">Vendas</span><span class="stat-value">${totais.num_vendas}</span>
+      ${totais.num_canceladas?`<span class="stat-sub">${totais.num_canceladas} estornada${totais.num_canceladas!==1?'s':''}</span>`:''}</div>
+    <div class="stat-card c-green"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(totais.total_vendas)}</span></div>
+    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${fmtMoeda(ticket)}</span></div>
+    <div class="stat-card c-orange"><span class="stat-label">Descontos dados</span><span class="stat-value">${fmtMoeda(totais.total_descontos)}</span></div>`
+}
+
+function linhasVendas(vendas, comData, vazio) {
+  if (!vendas.length) return linhaVazia(6, 'cart', vazio)
+  return vendas.map(v=>`<tr class="${v.status==='cancelada'?'row-cancelada':''}">
+      <td><code>#${fmtNumVenda(v.id)}</code></td>
+      <td>${comData?fmtDH(v.criado_em):fmtHora(v.criado_em)}</td>
+      <td>${v.status==='cancelada'?'<span class="badge-status cancelada">Estornada</span>':badgePagamento(v.pagamento)}</td>
+      <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}${v.cliente_nome?`<div class="item-cod">${escHtml(v.cliente_nome)}</div>`:''}</td>
+      <td class="num"><strong>${fmtMoeda(v.total)}</strong></td>
+      <td style="text-align:right;"><button class="btn btn-sm btn-outline" data-ver="${v.id}">${icon('eye')} Ver</button></td>
+    </tr>`).join('')
+}
+
+function renderPagResumo(el, porPagamento, total) {
+  if (!porPagamento.length) { el.innerHTML = '<div class="side-vazio">Nenhuma venda no período</div>'; return }
+  el.innerHTML = porPagamento.map(p=>`
+    <div class="pag-linha">
+      <span class="pag-nome">${icon(PAGAMENTO_ICON[p.pagamento]||'wallet')}${PAGAMENTO_LABEL[p.pagamento]||escHtml(p.pagamento)}</span>
+      <span class="pag-valor">${fmtMoeda(p.total)}</span>
+      <span class="pag-qtd">${p.quantidade} venda${p.quantidade!==1?'s':''}</span>
+      <span class="pag-qtd" style="text-align:right;">${total>0?((p.total/total)*100).toFixed(0):0}%</span>
+      <div class="pag-barra"><span style="width:${total>0?(p.total/total)*100:0}%"></span></div>
+    </div>`).join('') +
+    `<div class="pag-total"><span>Total</span><span>${fmtMoeda(total)}</span></div>`
 }
 
 async function carregarHoje() {
   const dados = await api.vendasHoje()
   const d = new Date()
-  document.getElementById('titulo-hoje').textContent =
-    `Vendas — ${d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}`
-  document.getElementById('stats-hoje').innerHTML = `
-    <div class="stat-card"><span class="stat-label">Vendas realizadas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
-    <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
-    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
-
-  const tbody = document.getElementById('tbody-hoje')
-  tbody.innerHTML = !dados.vendas.length
-    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda hoje</td></tr>`
-    : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code></td>
-        <td>${fmtHora(v.criado_em)}</td>
-        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
-        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
-        <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
-      </tr>`).join('')
+  $('titulo-hoje').textContent =
+    `Vendas de ${d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}`
+  $('stats-hoje').innerHTML = statsVendas(dados.totais)
+  $('tbody-hoje').innerHTML = linhasVendas(dados.vendas, false, 'Nenhuma venda hoje')
+  renderPagResumo($('pagamentos-hoje'), dados.porPagamento, dados.totais.total_vendas)
 }
 
-document.getElementById('btn-refresh-hoje').addEventListener('click', carregarHoje)
+$('btn-refresh-hoje').addEventListener('click', carregarHoje)
 
 async function carregarMensal() {
-  const mes = parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano = parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados = await api.vendasMensais(mes, ano)
-  document.getElementById('stats-mensal').innerHTML = `
-    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
-    <div class="stat-card"><span class="stat-label">Vendas</span><span class="stat-value">${dados.totais.num_vendas}</span></div>
-    <div class="stat-card"><span class="stat-label">Total arrecadado</span><span class="stat-value green">${fmtMoeda(dados.totais.total_vendas)}</span></div>
-    <div class="stat-card"><span class="stat-label">Ticket médio</span><span class="stat-value purple">${dados.totais.num_vendas>0?fmtMoeda(dados.totais.total_vendas/dados.totais.num_vendas):'R$ 0,00'}</span></div>`
-
-  const tbody = document.getElementById('tbody-mensal')
-  tbody.innerHTML = !dados.vendas.length
-    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
-    : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code></td>
-        <td>${fmtDH(v.criado_em)}</td>
-        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
-        <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
-        <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-outline" onclick="verDetalhesVenda(${v.id})">Ver</button></td>
-      </tr>`).join('')
+  const mes = parseInt($('sel-mes-mensal').value)
+  const ano = parseInt($('sel-ano-mensal').value)
+  const [dados, top] = await Promise.all([api.vendasMensais(mes, ano), api.maisVendidos(mes, ano)])
+  $('stats-mensal').innerHTML = statsVendas(dados.totais)
+  $('tbody-mensal').innerHTML = linhasVendas(dados.vendas, true, 'Nenhuma venda neste período')
+  renderPagResumo($('pagamentos-mensal'), dados.porPagamento, dados.totais.total_vendas)
+  $('top-produtos-mensal').innerHTML = !top.length
+    ? '<div class="side-vazio">Nenhuma venda no período</div>'
+    : top.map((p,i)=>`<div class="top-item">
+        <span class="top-pos">${i+1}</span>
+        <span class="top-nome" title="${escHtml(p.nome_produto)}">${escHtml(p.nome_produto)}</span>
+        <span class="top-qtd"><strong>${p.quantidade}</strong> un · ${fmtMoeda(p.total)}</span>
+      </div>`).join('')
 }
 
-document.getElementById('btn-buscar-mensal').addEventListener('click', carregarMensal)
+$('btn-buscar-mensal').addEventListener('click', carregarMensal)
+
+;['tbody-hoje','tbody-mensal'].forEach(id => $(id).addEventListener('click', e=>{
+  const b = e.target.closest('[data-ver]'); if (b) verDetalhesVenda(Number(b.dataset.ver))
+}))
+
+/* ============================================================
+   FATURAMENTO DO ANO (MEI)
+   ============================================================ */
+// Limite anual do MEI: confira o valor em vigor no Portal do Empreendedor
+const LIMITE_MEI_PADRAO = 81000
+function limiteMei() {
+  try { const v = parseFloat(localStorage.getItem('limiteMei')); return v > 0 ? v : LIMITE_MEI_PADRAO }
+  catch(e) { return LIMITE_MEI_PADRAO }
+}
+
+async function carregarAnual() {
+  const ano = parseInt($('sel-ano-anual').value)
+  const dados = await api.faturamentoAnual(ano)
+  const limite = limiteMei()
+  const pct = limite > 0 ? (dados.total / limite) * 100 : 0
+  const nivel = pct >= 100 ? 'estourou' : pct >= 80 ? 'alerta' : 'ok'
+  const anoAtual = ano === new Date().getFullYear()
+  const aviso = nivel === 'estourou'
+    ? `O faturamento passou do limite do MEI. Converse com o contador o quanto antes.`
+    : nivel === 'alerta'
+      ? `Atenção: já foram ${fmtPct(pct)} do limite do MEI. Faltam ${fmtMoeda(limite - dados.total)}.`
+      : `${anoAtual ? 'Ainda faltam' : 'Ficaram'} ${fmtMoeda(limite - dados.total)} para o limite do MEI.`
+  $('mei-card').innerHTML = `
+    <div class="mei-topo">
+      <div>
+        <span class="stat-label">Faturamento de ${ano}</span>
+        <div class="mei-total">${fmtMoeda(dados.total)}</div>
+      </div>
+      <div class="mei-limite">
+        Limite anual do MEI<br>
+        <input type="number" id="mei-limite-input" min="0" step="0.01" value="${limite}" title="Confira o valor em vigor no Portal do Empreendedor">
+      </div>
+    </div>
+    <div class="mei-barra ${nivel}"><span style="width:${Math.min(pct,100).toFixed(1)}%"></span></div>
+    <div class="mei-aviso ${nivel}">${aviso}</div>
+    <p class="form-hint">Este é o valor para a declaração anual do MEI (DASN-SIMEI): soma das vendas do ano, já descontadas as devoluções de trocas e as vendas estornadas. Vendas no fiado contam no mês em que foram feitas.</p>`
+  $('tbody-anual').innerHTML = dados.meses.map(m => `<tr>
+      <td>${MESES_PT[m.mes]}</td>
+      <td class="num">${fmtMoeda(m.vendas)}</td>
+      <td class="num">${m.devolucoes ? `− ${fmtMoeda(m.devolucoes)}` : '—'}</td>
+      <td class="num"><strong>${fmtMoeda(m.total)}</strong></td>
+    </tr>`).join('') + `<tr><td><strong>Total</strong></td><td></td><td></td><td class="num"><strong>${fmtMoeda(dados.total)}</strong></td></tr>`
+}
+$('btn-buscar-anual').addEventListener('click', carregarAnual)
+
+$('mei-card').addEventListener('change', e => {
+  if (e.target.id !== 'mei-limite-input') return
+  const v = parseFloat(e.target.value)
+  if (!(v > 0)) { toast('Limite inválido.', 'error'); return }
+  try { localStorage.setItem('limiteMei', String(v)) } catch(err) { /* sem armazenamento: vale só agora */ }
+  carregarAnual()
+})
+
+$('btn-export-anual').addEventListener('click', async () => {
+  const ano = parseInt($('sel-ano-anual').value)
+  const dados = await api.faturamentoAnual(ano)
+  const doc = _novoPDF()
+  let y = _pdfHeader(doc, `Faturamento de ${ano} (MEI)`, 'Base para a declaração anual DASN-SIMEI')
+  y = _pdfCards(doc, y, [
+    { label: 'Faturamento do ano', value: fmtMoeda(dados.total), color: 'green' },
+    { label: 'Limite do MEI',      value: fmtMoeda(limiteMei()), color: 'gray' },
+    { label: 'Uso do limite',      value: fmtPct(dados.total / limiteMei() * 100), color: dados.total > limiteMei() ? 'red' : 'purple' },
+  ])
+  y = _pdfTable(doc, y, {
+    headers:   ['Mês', 'Vendas (R$)', 'Devoluções (R$)', 'Faturamento (R$)'],
+    colWidths: [56, 42, 42, 42],
+    aligns:    ['left', 'right', 'right', 'right'],
+    rows: dados.meses.map(m => [MESES_PT[m.mes], fmtMoeda(m.vendas), m.devolucoes ? `- ${fmtMoeda(m.devolucoes)}` : '-', fmtMoeda(m.total)])
+  })
+  _pdfTotalRow(doc, y - 5, `TOTAL DE ${ano}`, fmtMoeda(dados.total))
+  _pdfFooter(doc)
+  doc.save(`faturamento-${ano}-mei.pdf`)
+  toast('PDF exportado com sucesso!', 'success')
+})
 
 /* Detalhes venda */
 async function verDetalhesVenda(id) {
   detalheVendaId = id
-  const {venda, itens} = await api.detalhesVenda(id)
-  document.getElementById('detalhes-venda-titulo').textContent =
-    `Venda #${id} — ${fmtDH(venda.criado_em)} — ${PAGAMENTO_LABEL[venda.pagamento]||venda.pagamento}`
-  document.getElementById('tbody-detalhes-venda').innerHTML = itens.map(i=>`
+  const {venda, itens, pagamentos} = await api.detalhesVenda(id)
+  $('detalhes-venda-titulo').textContent = `Venda nº ${fmtNumVenda(id)}`
+  $('detalhes-venda-info').innerHTML = `
+    <span class="info-pill">Data: <strong>${fmtDH(venda.criado_em)}</strong></span>
+    ${pagamentos.map(p=>`<span class="info-pill">${PAGAMENTO_LABEL[p.forma]||escHtml(p.forma)}: <strong>${fmtMoeda(p.valor)}</strong>${p.detalhe?` (${escHtml(p.detalhe)})`:''}</span>`).join('')}
+    ${venda.cliente_nome?`<span class="info-pill">Cliente: <strong>${escHtml(venda.cliente_nome)}</strong></span>`:''}
+    ${venda.status==='cancelada'?`<span class="badge-status cancelada">Estornada em ${fmtDH(venda.cancelado_em)}</span>`:''}`
+  $('tbody-detalhes-venda').innerHTML = itens.map(i=>`
     <tr>
-      <td>${escHtml(i.nome_produto)}</td>
-      <td style="text-align:center;">${i.quantidade}</td>
-      <td>${fmtMoeda(i.preco_unitario)}</td>
-      <td><strong>${fmtMoeda(i.preco_unitario*i.quantidade)}</strong></td>
+      <td>${escHtml(i.nome_produto)} ${i.promo?'<span class="badge-queima">queima</span>':''}</td>
+      <td class="ctr">${i.quantidade}</td>
+      <td class="num">${fmtMoeda(i.preco_unitario)}</td>
+      <td class="num"><strong>${fmtMoeda(i.preco_unitario*i.quantidade)}</strong></td>
     </tr>`).join('')
-  document.getElementById('detalhes-total-row').innerHTML = `Total: ${fmtMoeda(venda.total)}`
+  $('detalhes-total-row').innerHTML = `
+    ${venda.desconto>0?`<span>Subtotal: ${fmtMoeda(venda.subtotal)}</span><span>Desconto: − ${fmtMoeda(venda.desconto)}</span>`:''}
+    <span class="grand">Total: ${fmtMoeda(venda.total)}</span>
+    ${venda.valor_recebido!=null?`<span>Recebido: ${fmtMoeda(venda.valor_recebido)} · Troco: ${fmtMoeda(venda.troco)}</span>`:''}`
   openModal('modal-detalhes-venda')
 }
 
-/* Gerar comprovante da venda — formato bobina térmica 80mm */
-async function gerarComprovante(vendaId) {
-  if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
+/* ============================================================
+   CUPOM TÉRMICO 80mm (comprovantes, vale, sangria, fechamento)
+   ============================================================ */
+// Texto sem acento: as fontes padrão do PDF nas impressoras térmicas não têm todos os acentos
+function semAcento(t) { return String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '') }
 
-  const { venda, itens } = await api.detalhesVenda(vendaId)
-  const { jsPDF } = window.jspdf
-
-  const W = 80   // largura da bobina 80mm
-  const m = 5    // margem lateral
-
-  // Altura dinâmica: calcula com base nos itens
-  const alturaItens = itens.reduce((s, i) => s + (i.quantidade > 1 ? 11 : 6), 0)
-  const alturaTotal = 85 + alturaItens
-
-  const doc = new jsPDF({ unit: 'mm', format: [W, alturaTotal], orientation: 'portrait' })
-
-  const solidLine = (y) => {
-    doc.setDrawColor(0); doc.setLineWidth(0.4); doc.setLineDash([], 0)
-    doc.line(m, y, W - m, y)
-  }
-  const dashLine = (y) => {
-    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.setLineDash([1.2, 1.2], 0)
-    doc.line(m, y, W - m, y)
-    doc.setLineDash([], 0)
-  }
-
-  let y = 8
-
-  // ── CABEÇALHO ──────────────────────────────────────────
-  doc.setTextColor(0)
-  doc.setFontSize(13); doc.setFont('helvetica', 'bold')
-  doc.text('CANTINHO DO BEBE', W / 2, y, { align: 'center' })
-  y += 5
-
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'normal')
-  doc.text('Comprovante de Venda', W / 2, y, { align: 'center' })
-  y += 7
-
-  solidLine(y); y += 5
-
-  // ── DADOS DA VENDA ──────────────────────────────────────
-  doc.setFontSize(8)
-
-  doc.setFont('helvetica', 'normal'); doc.text('Venda:', m, y)
-  doc.setFont('helvetica', 'bold');   doc.text(`#${venda.id}`, W - m, y, { align: 'right' })
-  y += 5
-
-  doc.setFont('helvetica', 'normal'); doc.text('Data/Hora:', m, y)
-  doc.setFont('helvetica', 'bold');   doc.text(fmtDH(venda.criado_em), W - m, y, { align: 'right' })
-  y += 5
-
-  doc.setFont('helvetica', 'normal'); doc.text('Pagamento:', m, y)
-  doc.setFont('helvetica', 'bold');   doc.text(PAGAMENTO_PDF[venda.pagamento] || venda.pagamento, W - m, y, { align: 'right' })
-  y += 7
-
-  solidLine(y); y += 4
-
-  // ── CABEÇALHO DA TABELA ────────────────────────────────
-  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold')
-  doc.text('PRODUTO', m, y)
-  doc.text('QTD', W - m - 18, y, { align: 'right' })
-  doc.text('TOTAL', W - m, y, { align: 'right' })
-  y += 3
-
-  dashLine(y); y += 4
-
-  // ── ITENS ───────────────────────────────────────────────
-  itens.forEach(item => {
-    const subtotal = item.preco_unitario * item.quantidade
-    const nomeMax  = 19
-    const nome     = item.nome_produto.length > nomeMax
-      ? item.nome_produto.slice(0, nomeMax) + '..' : item.nome_produto
-
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
-    doc.text(nome, m, y)
-    doc.text(String(item.quantidade), W - m - 18, y, { align: 'right' })
-    doc.setFont('helvetica', 'bold')
-    doc.text(fmtMoeda(subtotal), W - m, y, { align: 'right' })
-    y += 5
-
-    if (item.quantidade > 1) {
-      doc.setFontSize(7); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
-      doc.text(`  ${item.quantidade}x ${fmtMoeda(item.preco_unitario)} cada`, m, y)
-      doc.setTextColor(0)
-      y += 6
-    }
-  })
-
-  dashLine(y); y += 5
-
-  // ── TOTAL ───────────────────────────────────────────────
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
-  doc.text('TOTAL:', m, y)
-  doc.text(fmtMoeda(venda.total), W - m, y, { align: 'right' })
-  y += 8
-
-  solidLine(y); y += 7
-
-  // ── RODAPÉ ──────────────────────────────────────────────
-  doc.setFontSize(8); doc.setFont('helvetica', 'italic'); doc.setTextColor(60)
-  doc.text('Obrigado pela compra!', W / 2, y, { align: 'center' })
-  y += 5
-  doc.text('Volte sempre.', W / 2, y, { align: 'center' })
-  y += 5
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100)
-  doc.text('Cantinho do Bebe - Sistema PDV', W / 2, y, { align: 'center' })
-
-  // Abre diálogo de impressão direto (sem salvar arquivo)
+function imprimirPDF(doc) {
   const blobUrl = doc.output('bloburl')
   const iframe = document.createElement('iframe')
   iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;'
@@ -727,7 +1424,97 @@ async function gerarComprovante(vendaId) {
       URL.revokeObjectURL(blobUrl)
     }, 60000)
   }
-  toast('Abrindo impressão...', 'success')
+}
+
+/* montar(c) recebe as funções de desenho; a altura do papel é medida antes de gerar o PDF */
+function cupomTermico(montar, { imprimir = true } = {}) {
+  const { jsPDF } = window.jspdf
+  const W = 80, m = 5
+  const desenhar = (doc) => {
+    let y = 8
+    const fonte = (tam, estilo='normal') => { doc.setFontSize(tam); doc.setFont('helvetica', estilo); doc.setTextColor(0) }
+    const c = {
+      centro(txt, { tam=8, estilo='normal', passo=4.6 } = {}) {
+        fonte(tam, estilo); doc.text(semAcento(txt), W/2, y, { align:'center' }); y += passo
+      },
+      linha(rotulo, valor, { tam=8, negrito=false, passo=5 } = {}) {
+        fonte(tam, 'normal'); doc.text(semAcento(rotulo), m, y)
+        fonte(tam, negrito ? 'bold' : 'normal'); doc.text(semAcento(valor), W-m, y, { align:'right' }); y += passo
+      },
+      item(nome, qtd, valor) {
+        fonte(8); doc.text(semAcento(nome.length>22?nome.slice(0,22)+'..':nome), m, y)
+        doc.text(String(qtd), W-m-20, y, { align:'right' })
+        fonte(8,'bold'); doc.text(semAcento(valor), W-m, y, { align:'right' }); y += 4.6
+      },
+      texto(txt, { tam=7.5, estilo='normal', passo=3.8 } = {}) {
+        fonte(tam, estilo)
+        doc.splitTextToSize(semAcento(txt), W-2*m).forEach(l => { doc.text(l, m, y); y += passo })
+      },
+      solida()    { doc.setLineWidth(0.4); doc.setLineDash([],0); doc.line(m, y, W-m, y); y += 5 },
+      tracejada() { doc.setLineWidth(0.3); doc.setLineDash([1.2,1.2],0); doc.line(m, y, W-m, y); doc.setLineDash([],0); y += 4 },
+      espaco(n=3) { y += n },
+      imagem(url, w, h) { doc.addImage(url, 'PNG', (W-w)/2, y, w, h); y += h + 2 },
+      assinatura(rotulo) { y += 10; doc.setLineWidth(0.3); doc.line(m+8, y, W-m-8, y); y += 4; c.centro(rotulo, { tam:7 }) },
+      cabecalho(titulo) {
+        c.centro('CANTINHO DO BEBE', { tam:13, estilo:'bold', passo:5 })
+        c.centro(titulo, { tam:8, passo:4 })
+      }
+    }
+    montar(c)
+    return y
+  }
+  const altura = desenhar(new jsPDF({ unit:'mm', format:[W, 3000] })) + 6
+  const doc = new jsPDF({ unit:'mm', format:[W, Math.max(altura, 50)], orientation:'portrait' })
+  desenhar(doc)
+  if (imprimir) imprimirPDF(doc)
+  return doc
+}
+
+function barcodePNG(codigo) {
+  const canvas = document.createElement('canvas')
+  JsBarcode(canvas, codigo, { format:'CODE128', width:2, height:60, displayValue:true, fontSize:18, margin:4 })
+  return canvas.toDataURL('image/png')
+}
+
+/* Comprovante da venda */
+async function gerarComprovante(vendaId) {
+  if (!vendaId) { toast('Venda não encontrada.', 'error'); return }
+  const { venda, itens, pagamentos, saldoCliente } = await api.detalhesVenda(vendaId)
+
+  cupomTermico(c => {
+    c.cabecalho('Comprovante de Venda')
+    c.centro('NAO E DOCUMENTO FISCAL', { tam:6.5, passo:5 })
+    c.solida()
+    if (venda.status === 'cancelada') { c.centro('*** VENDA ESTORNADA ***', { tam:10, estilo:'bold', passo:6 }); c.tracejada() }
+    c.linha('Venda:', `No ${fmtNumVenda(venda.id)}`, { negrito:true })
+    c.linha('Data/Hora:', fmtDH(venda.criado_em), { negrito:true })
+    if (venda.cliente_nome) c.linha('Cliente:', venda.cliente_nome, { negrito:true })
+    c.espaco(1); c.solida()
+    c.item('PRODUTO', 'QTD', 'TOTAL'); c.tracejada()
+    itens.forEach(i => {
+      c.item(i.nome_produto, i.quantidade, fmtMoeda(i.preco_unitario * i.quantidade))
+      if (i.quantidade > 1 || i.promo) c.texto(`  ${i.quantidade}x ${fmtMoeda(i.preco_unitario)}${i.promo?' (queima de estoque)':''}`, { tam:7 })
+    })
+    c.tracejada()
+    if (venda.desconto > 0) {
+      c.linha('Subtotal:', fmtMoeda(venda.subtotal))
+      c.linha('Desconto:', `- ${fmtMoeda(venda.desconto)}`)
+    }
+    c.linha('TOTAL:', fmtMoeda(venda.total), { tam:11, negrito:true, passo:6 })
+    pagamentos.forEach(p => c.linha(`${PAGAMENTO_PDF[p.forma]||p.forma}${p.detalhe?` (${p.detalhe})`:''}:`, fmtMoeda(p.valor)))
+    if (venda.valor_recebido != null && venda.troco > 0) {
+      c.linha('Dinheiro recebido:', fmtMoeda(venda.valor_recebido))
+      c.linha('Troco:', fmtMoeda(venda.troco), { negrito:true })
+    }
+    if (pagamentos.some(p => p.forma === 'fiado')) {
+      c.espaco(1); c.tracejada()
+      c.linha('Saldo devedor atual:', fmtMoeda(saldoCliente), { negrito:true })
+      c.assinatura(`Assinatura: ${venda.cliente_nome || 'cliente'}`)
+    }
+    c.espaco(2); c.solida()
+    c.centro('Obrigado pela compra!', { estilo:'italic' })
+    c.centro('Trocas somente com este comprovante.', { estilo:'italic' })
+  })
 }
 
 /* ============================================================
@@ -751,7 +1538,7 @@ function _pdfHeader(doc, titulo, periodo, isConfidential = false) {
   doc.setFillColor(109, 40, 217)
   doc.rect(0, 0, 130, 30, 'F')
 
-  // Triângulo decorativo (transição suave simulada)
+  // Transição
   doc.setFillColor(91, 33, 182)
   doc.rect(110, 0, 30, 30, 'F')
 
@@ -767,7 +1554,7 @@ function _pdfHeader(doc, titulo, periodo, isConfidential = false) {
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(16)
   doc.setFont('helvetica', 'bold')
-  doc.text('Cantinho do Bebe', 14, 13)
+  doc.text('Cantinho do Bebê', 14, 13)
 
   // Slogan / sistema
   doc.setTextColor(196, 181, 253)
@@ -837,29 +1624,35 @@ function _pdfCards(doc, y, cards) {
     const x = m + i * (cW + gap)
     const s = SCHEMES[card.color] || SCHEMES.gray
 
-    // Fundo do card
     doc.setFillColor(...s.bg)
     doc.setDrawColor(...s.bg)
     doc.roundedRect(x, y, cW, cH, 2, 2, 'FD')
 
-    // Barra de acento esquerda
     doc.setFillColor(...s.accent)
     doc.roundedRect(x, y, 3, cH, 1, 1, 'F')
 
-    // Label
     doc.setTextColor(...s.label)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'bold')
     doc.text(card.label.toUpperCase(), x + 6, y + 7)
 
-    // Valor
     doc.setTextColor(...s.value)
-    doc.setFontSize(13)
+    doc.setFontSize(n > 3 ? 11.5 : 13)
     doc.setFont('helvetica', 'bold')
     doc.text(String(card.value), x + 6, y + 18)
   })
 
   return y + cH + 7
+}
+
+/* Título de seção */
+function _pdfSecao(doc, y, titulo) {
+  if (y > 255) { doc.addPage(); y = 20 }
+  doc.setTextColor(30, 41, 59)
+  doc.setFontSize(10.5)
+  doc.setFont('helvetica', 'bold')
+  doc.text(titulo, 14, y + 4)
+  return y + 8
 }
 
 /* Tabela de dados */
@@ -886,32 +1679,37 @@ function _pdfTable(doc, y, { headers, colWidths, aligns, rows }) {
     return posY + hH
   }
 
+  if (y + hH + rH > 280) { doc.addPage(); y = 20 }
+  let blocoInicio = y
   y = desenharHeader(y)
+
+  const fecharBloco = (fim) => {
+    doc.setDrawColor(203, 213, 225)
+    doc.setLineWidth(0.5)
+    doc.rect(m, blocoInicio, tableW, fim - blocoInicio, 'S')
+  }
 
   rows.forEach((row, ri) => {
     if (y + rH > 280) {
+      fecharBloco(y)
       doc.addPage()
-      y = 20
-      y = desenharHeader(y)
+      blocoInicio = 20
+      y = desenharHeader(20)
     }
 
-    // Fundo alternado
     doc.setFillColor(ri % 2 === 0 ? 248 : 255, ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 252 : 255)
     doc.rect(m, y, tableW, rH, 'F')
 
-    // Linha divisória inferior
     doc.setDrawColor(226, 232, 240)
     doc.setLineWidth(0.2)
     doc.line(m, y + rH, m + tableW, y + rH)
 
-    // Células
     let xc = m
     row.forEach((cell, i) => {
       const al = aligns?.[i] || 'left'
       const xT = al === 'right' ? xc + colWidths[i] - 3 : (al === 'center' ? xc + colWidths[i] / 2 : xc + 3)
       doc.setTextColor(30, 41, 59)
       doc.setFontSize(8.5)
-      // Coluna Nº e Total em negrito
       doc.setFont('helvetica', (i === 0 || i === row.length - 1) ? 'bold' : 'normal')
       doc.text(String(cell), xT, y + 5.2, { align: al })
       xc += colWidths[i]
@@ -920,18 +1718,14 @@ function _pdfTable(doc, y, { headers, colWidths, aligns, rows }) {
     y += rH
   })
 
-  // Borda externa da tabela
-  const tableStartY = y - rows.length * rH - hH
-  doc.setDrawColor(203, 213, 225)
-  doc.setLineWidth(0.5)
-  doc.rect(m, tableStartY, tableW, rows.length * rH + hH, 'S')
-
+  fecharBloco(y)
   return y + 5
 }
 
 /* Linha totalizadora abaixo da tabela */
 function _pdfTotalRow(doc, y, label, valor) {
   const m = 14, W = 210
+  if (y + 9 > 282) { doc.addPage(); y = 20 }
   doc.setFillColor(30, 41, 59)
   doc.rect(m, y, W - m * 2, 9, 'F')
   doc.setTextColor(255, 255, 255)
@@ -939,7 +1733,7 @@ function _pdfTotalRow(doc, y, label, valor) {
   doc.setFont('helvetica', 'bold')
   doc.text(label, m + 3, y + 6)
   doc.text(valor, W - m - 3, y + 6, { align: 'right' })
-  return y + 9 + 4
+  return y + 9 + 6
 }
 
 /* Rodapé em todas as páginas */
@@ -954,7 +1748,7 @@ function _pdfFooter(doc, isConfidential = false) {
     doc.setTextColor(148, 163, 184)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
-    doc.text('Cantinho do Bebe — Sistema PDV', 14, 290)
+    doc.text('Cantinho do Bebê — Sistema PDV', 14, 290)
     doc.text(`Página ${p} de ${totalPages}`, W / 2, 290, { align: 'center' })
     const footerRight = isConfidential ? 'Documento confidencial' : 'Gerado automaticamente'
     doc.text(footerRight, W - 14, 290, { align: 'right' })
@@ -974,35 +1768,57 @@ function _pdfSemDados(doc, y, msg = 'Nenhum registro encontrado para este perío
   return y + 22
 }
 
+/* Blocos comuns dos relatórios de vendas */
+function _pdfCardsVendas(doc, y, totais) {
+  const ticket = totais.num_vendas > 0 ? totais.total_vendas / totais.num_vendas : 0
+  return _pdfCards(doc, y, [
+    { label: 'Vendas',           value: String(totais.num_vendas),      color: 'purple' },
+    { label: 'Total arrecadado', value: fmtMoeda(totais.total_vendas),  color: 'green'  },
+    { label: 'Ticket médio',     value: fmtMoeda(ticket),               color: 'gray'   },
+    { label: 'Descontos',        value: fmtMoeda(totais.total_descontos), color: 'orange' },
+  ])
+}
+
+function _pdfPagamentos(doc, y, porPagamento, total) {
+  if (!porPagamento.length) return y
+  y = _pdfSecao(doc, y, 'Conferência por forma de pagamento')
+  return _pdfTable(doc, y, {
+    headers:   ['Forma de pagamento', 'Vendas', '% do total', 'Valor (R$)'],
+    colWidths: [72, 30, 30, 50],
+    aligns:    ['left', 'center', 'center', 'right'],
+    rows: porPagamento.map(p => [
+      PAGAMENTO_LABEL[p.pagamento] || p.pagamento,
+      String(p.quantidade),
+      fmtPct(total > 0 ? (p.total / total) * 100 : 0),
+      fmtMoeda(p.total)
+    ])
+  }) + 3
+}
+
 /* ============================================================
    PDF — EXPORTAR: VENDAS DE HOJE
    ============================================================ */
-document.getElementById('btn-export-hoje').addEventListener('click', async () => {
+$('btn-export-hoje').addEventListener('click', async () => {
   const dados = await api.vendasHoje()
   const doc   = _novoPDF()
   const hoje  = new Date()
   const periodoStr = hoje.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   let y = _pdfHeader(doc, 'Relatório de Vendas do Dia', periodoStr)
+  y = _pdfCardsVendas(doc, y, dados.totais)
+  y = _pdfPagamentos(doc, y, dados.porPagamento, dados.totais.total_vendas)
 
-  const ticket = dados.totais.num_vendas > 0
-    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
-
-  y = _pdfCards(doc, y, [
-    { label: 'Vendas realizadas', value: String(dados.totais.num_vendas), color: 'purple' },
-    { label: 'Total arrecadado',  value: fmtMoeda(dados.totais.total_vendas), color: 'green'  },
-    { label: 'Ticket médio',      value: fmtMoeda(ticket),                    color: 'gray'   },
-  ])
-
-  if (dados.vendas.length > 0) {
+  const vendas = dados.vendas.filter(v => v.status === 'concluida')
+  y = _pdfSecao(doc, y, 'Vendas')
+  if (vendas.length > 0) {
     y = _pdfTable(doc, y, {
       headers:   ['Nº', 'Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
-      colWidths: [18,   22,     68,                   22,      52],
+      colWidths: [24,   22,     62,                   22,      52],
       aligns:    ['left','left','left',                'center','right'],
-      rows: dados.vendas.map(v => [
-        `#${v.id}`,
+      rows: vendas.map(v => [
+        fmtNumVenda(v.id),
         fmtHora(v.criado_em),
-        PAGAMENTO_PDF[v.pagamento] || v.pagamento,
+        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
         String(v.num_itens),
         fmtMoeda(v.total)
       ])
@@ -1020,32 +1836,37 @@ document.getElementById('btn-export-hoje').addEventListener('click', async () =>
 /* ============================================================
    PDF — EXPORTAR: HISTÓRICO MENSAL
    ============================================================ */
-document.getElementById('btn-export-mensal').addEventListener('click', async () => {
-  const mes   = parseInt(document.getElementById('sel-mes-mensal').value)
-  const ano   = parseInt(document.getElementById('sel-ano-mensal').value)
-  const dados = await api.vendasMensais(mes, ano)
+$('btn-export-mensal').addEventListener('click', async () => {
+  const mes   = parseInt($('sel-mes-mensal').value)
+  const ano   = parseInt($('sel-ano-mensal').value)
+  const [dados, top] = await Promise.all([api.vendasMensais(mes, ano), api.maisVendidos(mes, ano)])
   const doc   = _novoPDF()
 
   let y = _pdfHeader(doc, 'Histórico Mensal de Vendas', `Período: ${MESES_PT[mes]} de ${ano}`)
+  y = _pdfCardsVendas(doc, y, dados.totais)
+  y = _pdfPagamentos(doc, y, dados.porPagamento, dados.totais.total_vendas)
 
-  const ticket = dados.totais.num_vendas > 0
-    ? dados.totais.total_vendas / dados.totais.num_vendas : 0
+  if (top.length) {
+    y = _pdfSecao(doc, y, 'Produtos mais vendidos')
+    y = _pdfTable(doc, y, {
+      headers:   ['#', 'Produto', 'Quantidade', 'Valor (R$)'],
+      colWidths: [14, 98, 30, 40],
+      aligns:    ['left', 'left', 'center', 'right'],
+      rows: top.map((p, i) => [String(i + 1), p.nome_produto.slice(0, 55), String(p.quantidade), fmtMoeda(p.total)])
+    }) + 3
+  }
 
-  y = _pdfCards(doc, y, [
-    { label: 'Vendas no mês',    value: String(dados.totais.num_vendas),      color: 'purple' },
-    { label: 'Total arrecadado', value: fmtMoeda(dados.totais.total_vendas),  color: 'green'  },
-    { label: 'Ticket médio',     value: fmtMoeda(ticket),                     color: 'gray'   },
-  ])
-
-  if (dados.vendas.length > 0) {
+  const vendas = dados.vendas.filter(v => v.status === 'concluida')
+  y = _pdfSecao(doc, y, 'Vendas')
+  if (vendas.length > 0) {
     y = _pdfTable(doc, y, {
       headers:   ['Nº', 'Data / Hora', 'Forma de Pagamento', 'Itens', 'Total (R$)'],
-      colWidths: [18,   42,            60,                   20,      42],
+      colWidths: [22,   40,            58,                   20,      42],
       aligns:    ['left','left',        'left',               'center','right'],
-      rows: dados.vendas.map(v => [
-        `#${v.id}`,
+      rows: vendas.map(v => [
+        fmtNumVenda(v.id),
         fmtDH(v.criado_em),
-        PAGAMENTO_PDF[v.pagamento] || v.pagamento,
+        PAGAMENTO_LABEL[v.pagamento] || v.pagamento,
         String(v.num_itens),
         fmtMoeda(v.total)
       ])
@@ -1063,211 +1884,242 @@ document.getElementById('btn-export-mensal').addEventListener('click', async () 
 /* ============================================================
    ADMINISTRADOR
    ============================================================ */
+let ultimaAtividade = Date.now()
+;['mousemove','keydown','mousedown'].forEach(ev =>
+  document.addEventListener(ev, ()=>{ ultimaAtividade = Date.now() }, { passive:true })
+)
+
+// Encerra a sessão de administrador após inatividade
+setInterval(()=>{
+  if (isAdmin && Date.now() - ultimaAtividade > ADMIN_TIMEOUT_MS) {
+    sairAdmin()
+    toast('Sessão de administrador encerrada por inatividade.','warn')
+  }
+}, 30 * 1000)
+
 function renderAdminState() {
-  document.getElementById('admin-login-wall').style.display = isAdmin ? 'none' : 'flex'
-  document.getElementById('admin-painel').style.display     = isAdmin ? 'block' : 'none'
-  if (isAdmin) carregarAdminCustos()
+  $('admin-login-wall').style.display = isAdmin ? 'none' : 'flex'
+  $('admin-painel').style.display     = isAdmin ? 'block' : 'none'
+  $('admin-dot').classList.toggle('on', isAdmin)
+  if (isAdmin) {
+    const ativa = document.querySelector('[data-admin-tab].active')
+    abrirAbaAdmin(ativa ? ativa.dataset.adminTab : 'custos')
+  } else {
+    setTimeout(()=>$('admin-email').focus(), 60)
+  }
+  if (secaoAtiva()==='mercadorias') abrirMercadorias()
+}
+
+async function sairAdmin() {
+  isAdmin = false
+  try { await api.adminLogout() } catch(e) {}
+  renderAdminState()
 }
 
 /* Login */
-document.getElementById('btn-admin-login').addEventListener('click', async ()=>{
-  const email = document.getElementById('admin-email').value.trim()
-  const senha = document.getElementById('admin-senha').value
-  const errEl = document.getElementById('admin-error')
+$('btn-admin-login').addEventListener('click', async ()=>{
+  const email = $('admin-email').value.trim()
+  const senha = $('admin-senha').value
+  const errEl = $('admin-error')
   errEl.style.display = 'none'
   if (!email||!senha) { errEl.style.display='block'; errEl.textContent='Preencha todos os campos.'; return }
   try {
-    const eH = await hashStr(email)
-    const sH = await hashStr(senha)
-    const ok = await api.verificarAdmin(eH, sH)
+    const ok = await api.adminLogin(email, senha)
     if (ok) {
       isAdmin = true
-      document.getElementById('admin-email').value = ''
-      document.getElementById('admin-senha').value = ''
+      ultimaAtividade = Date.now()
+      $('admin-email').value = ''
+      $('admin-senha').value = ''
       renderAdminState()
     } else {
       errEl.style.display = 'block'
       errEl.textContent   = 'E-mail ou senha incorretos.'
+      $('admin-senha').select()
     }
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(msgErro(err),'error') }
 })
 
-document.getElementById('admin-senha').addEventListener('keydown', e=>{
-  if(e.key==='Enter') document.getElementById('btn-admin-login').click()
-})
+$('admin-email').addEventListener('keydown', e=>{ if(e.key==='Enter') $('admin-senha').focus() })
+$('admin-senha').addEventListener('keydown', e=>{ if(e.key==='Enter') $('btn-admin-login').click() })
 
 /* Logout */
-document.getElementById('btn-admin-logout').addEventListener('click', ()=>{
-  confirmar('Deseja sair do painel de administrador?', ()=>{
-    isAdmin = false
-    renderAdminState()
-    navigateTo('produtos')
+$('btn-admin-logout').addEventListener('click', ()=>{
+  confirmar('Deseja sair do painel de administrador?', async ()=>{
+    await sairAdmin()
+    navigateTo('caixa')
     toast('Sessão de administrador encerrada.')
-  })
+  }, { titulo:'Sair', botao:'Sair' })
 })
 
 /* Tabs admin */
-document.querySelectorAll('[data-admin-tab]').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('[data-admin-tab]').forEach(b=>b.classList.remove('active'))
-    document.querySelectorAll('#admin-painel .tab-pane').forEach(p=>p.classList.remove('active'))
-    btn.classList.add('active')
-    document.getElementById(`admin-tab-${btn.dataset.adminTab}`).classList.add('active')
-    if(btn.dataset.adminTab==='custos')   carregarAdminCustos()
-    if(btn.dataset.adminTab==='estoque')  carregarAdminEstoque()
-    if(btn.dataset.adminTab==='estornos') carregarAdminEstornos()
-  })
-})
+function abrirAbaAdmin(aba) {
+  document.querySelectorAll('[data-admin-tab]').forEach(b=>b.classList.toggle('active', b.dataset.adminTab===aba))
+  document.querySelectorAll('#admin-painel .tab-pane').forEach(p=>p.classList.toggle('active', p.id===`admin-tab-${aba}`))
+  if(aba==='custos')    carregarAdminCustos()
+  if(aba==='estoque')   carregarAdminEstoque()
+  if(aba==='lucro')     carregarAdminLucro()
+  if(aba==='estornos')  carregarAdminEstornos()
+  if(aba==='seguranca') carregarBackups()
+}
 
-/* --- Aba: Estornos (admin) --- */
+document.querySelectorAll('[data-admin-tab]').forEach(btn=>
+  btn.addEventListener('click', ()=>abrirAbaAdmin(btn.dataset.adminTab))
+)
+
+/* --- Aba: Estornos --- */
 async function carregarAdminEstornos() {
-  const mes = parseInt(document.getElementById('admin-sel-mes-estornos').value)
-  const ano = parseInt(document.getElementById('admin-sel-ano-estornos').value)
+  const mes = parseInt($('admin-sel-mes-estornos').value)
+  const ano = parseInt($('admin-sel-ano-estornos').value)
   const dados = await api.vendasMensais(mes, ano)
-  const tbody = document.getElementById('tbody-admin-estornos')
-  tbody.innerHTML = !dados.vendas.length
-    ? `<tr><td colspan="6" class="empty-state" style="padding:32px 0;">Nenhuma venda neste período</td></tr>`
-    : dados.vendas.map(v=>`<tr>
-        <td><code>#${v.id}</code></td>
+  $('tbody-admin-estornos').innerHTML = !dados.vendas.length
+    ? linhaVazia(6, 'cart', 'Nenhuma venda neste período')
+    : dados.vendas.map(v=>`<tr class="${v.status==='cancelada'?'row-cancelada':''}">
+        <td><code>#${fmtNumVenda(v.id)}</code></td>
         <td>${fmtDH(v.criado_em)}</td>
-        <td><span class="badge-pagamento">${PAGAMENTO_LABEL[v.pagamento]||v.pagamento}</span></td>
+        <td>${badgePagamento(v.pagamento)}</td>
         <td>${v.num_itens} ${v.num_itens===1?'item':'itens'}</td>
-        <td><strong>${fmtMoeda(v.total)}</strong></td>
-        <td><button class="btn btn-sm btn-estorno" onclick="estornarVenda(${v.id})">↩ Estornar</button></td>
+        <td class="num"><strong>${fmtMoeda(v.total)}</strong></td>
+        <td>${v.status==='cancelada'
+          ? '<span class="badge-status cancelada">Estornada</span>'
+          : `<button class="btn-estorno" data-estornar="${v.id}">${icon('undo')} Estornar</button>`}</td>
       </tr>`).join('')
 }
 
-document.getElementById('admin-btn-buscar-estornos').addEventListener('click', carregarAdminEstornos)
+$('admin-btn-buscar-estornos').addEventListener('click', carregarAdminEstornos)
+$('tbody-admin-estornos').addEventListener('click', e=>{
+  const b = e.target.closest('[data-estornar]'); if (b) estornarVenda(Number(b.dataset.estornar))
+})
 
 /* --- Aba: Preços de Custo --- */
 async function carregarAdminCustos() {
   const prods = await api.listarProdutos()
-  const tbody = document.getElementById('tbody-admin-custos')
-  if (!prods.length) {
-    tbody.innerHTML=`<tr><td colspan="5" class="empty-state" style="padding:32px 0;">Nenhum produto cadastrado</td></tr>`
-    return
-  }
+  const tbody = $('tbody-admin-custos')
+  if (!prods.length) { tbody.innerHTML = linhaVazia(5, 'box', 'Nenhum produto cadastrado'); return }
   tbody.innerHTML = prods.map(p=>{
-    const semCusto = p.preco_custo===0||p.preco_custo===null
+    const semCusto = !p.preco_custo
     const m = semCusto ? '—' : margem(p.preco_custo, p.preco_venda)
     return `<tr class="${semCusto?'linha-sem-custo':''}">
       <td><strong>${escHtml(p.nome)}</strong> ${semCusto?'<span class="badge-sem-custo">sem custo</span>':''}</td>
-      <td>${fmtMoeda(p.preco_venda)}</td>
-      <td>${semCusto?'<span class="text-muted">—</span>':fmtMoeda(p.preco_custo)}</td>
-      <td>${typeof m==='string'&&m!=='—'?`<span class="${parseFloat(m)>=0?'positive':'negative'}">${m}</span>`:m}</td>
+      <td class="num">${fmtMoeda(p.preco_venda)}</td>
+      <td class="num">${semCusto?'<span class="text-muted">—</span>':fmtMoeda(p.preco_custo)}</td>
+      <td class="num">${m!=='—'?`<span class="${p.preco_venda>=p.preco_custo?'positive':'negative'}">${m}</span>`:m}</td>
       <td>
-        <button class="btn btn-sm btn-outline" onclick="abrirEditarCusto(${p.id},'${escHtml(p.nome).replace(/'/g,"\\'")}',${p.preco_custo})">
-          ${semCusto?'✚ Definir':'✏️ Editar'}
+        <button class="btn btn-sm btn-outline" data-custo="${p.id}">
+          ${semCusto?`${icon('plus')} Definir`:`${icon('edit')} Editar`}
         </button>
       </td>
     </tr>`
   }).join('')
 }
 
-function abrirEditarCusto(id, nome, custoAtual) {
-  adminEditCustoId = id
-  document.getElementById('editar-custo-nome').textContent = nome
-  document.getElementById('editar-custo-valor').value = custoAtual||''
-  openModal('modal-editar-custo')
-  setTimeout(()=>document.getElementById('editar-custo-valor').focus(), 80)
+$('tbody-admin-custos').addEventListener('click', e=>{
+  const b = e.target.closest('[data-custo]'); if (!b) return
+  const p = todosProdutos.find(x=>x.id===Number(b.dataset.custo)); if (p) abrirEditarCusto(p)
+})
+
+function abrirEditarCusto(p) {
+  adminEditCustoId = p.id
+  $('editar-custo-nome').textContent = `${p.nome} — venda a ${fmtMoeda(p.preco_venda)}`
+  $('editar-custo-valor').value = p.preco_custo||''
+  openModal('modal-editar-custo', 'editar-custo-valor')
 }
 
-document.getElementById('btn-salvar-custo').addEventListener('click', async ()=>{
-  const v = parseFloat(document.getElementById('editar-custo-valor').value)
+$('btn-salvar-custo').addEventListener('click', async ()=>{
+  const v = parseFloat($('editar-custo-valor').value)
   if (isNaN(v)||v<0) { toast('Valor inválido.','error'); return }
   try {
     await api.adminAtualizarCusto(adminEditCustoId, v)
     closeModal('modal-editar-custo')
     toast('Preço de custo salvo!','success')
-    await carregarAdminCustos()
     await carregarProdutos()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+    await carregarAdminCustos()
+  } catch(err) { toast(msgErro(err),'error') }
 })
 
-document.getElementById('editar-custo-valor').addEventListener('keydown', e=>{
-  if(e.key==='Enter') document.getElementById('btn-salvar-custo').click()
+$('editar-custo-valor').addEventListener('keydown', e=>{
+  if(e.key==='Enter') $('btn-salvar-custo').click()
 })
 
 /* --- Aba: Estoque --- */
 async function carregarAdminEstoque() {
   const prods = await api.listarProdutos()
-  const tbody = document.getElementById('tbody-admin-estoque')
-  if (!prods.length) {
-    tbody.innerHTML=`<tr><td colspan="4" class="empty-state" style="padding:32px 0;">Nenhum produto cadastrado</td></tr>`
-    return
-  }
-  tbody.innerHTML = prods.map(p=>{
-    const badge = p.estoque<=0
-      ? `<span class="badge-estoque-baixo">${p.estoque}</span>`
-      : p.estoque<=3
-        ? `<span class="badge-estoque-aviso">${p.estoque}</span>`
-        : `<span class="badge-estoque-ok">${p.estoque}</span>`
-    return `<tr>
+  const tbody = $('tbody-admin-estoque')
+  if (!prods.length) { tbody.innerHTML = linhaVazia(4, 'box', 'Nenhum produto cadastrado'); return }
+  tbody.innerHTML = prods.map(p=>`<tr>
       <td><strong>${escHtml(p.nome)}</strong></td>
-      <td><code>${p.codigo_barras}</code></td>
-      <td>${badge}</td>
+      <td><code>${escHtml(p.codigo_barras)}</code></td>
+      <td class="ctr">${badgeEstoque(p.estoque)}</td>
       <td>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="number" id="est-input-${p.id}" value="${p.estoque}" min="0"
-            style="width:80px;padding:6px 10px;border:1px solid var(--border);border-radius:7px;font-size:14px;">
-          <button class="btn btn-sm btn-primary" onclick="salvarEstoque(${p.id})">Salvar</button>
+          <input type="number" class="input-inline" id="est-input-${p.id}" value="${p.estoque}" min="0" data-estoque-input="${p.id}">
+          <button class="btn btn-sm btn-primary" data-salvar-estoque="${p.id}">Salvar</button>
         </div>
       </td>
-    </tr>`
-  }).join('')
+    </tr>`).join('')
 }
 
+$('tbody-admin-estoque').addEventListener('click', e=>{
+  const b = e.target.closest('[data-salvar-estoque]'); if (b) salvarEstoque(Number(b.dataset.salvarEstoque))
+})
+$('tbody-admin-estoque').addEventListener('keydown', e=>{
+  if (e.key==='Enter' && e.target.dataset.estoqueInput) salvarEstoque(Number(e.target.dataset.estoqueInput))
+})
+
 async function salvarEstoque(id) {
-  const input = document.getElementById(`est-input-${id}`)
-  const v = parseInt(input.value)
+  const v = parseInt($(`est-input-${id}`).value)
   if (isNaN(v)||v<0) { toast('Quantidade inválida.','error'); return }
   try {
     await api.adminAtualizarEstoque(id, v)
     toast('Estoque atualizado!','success')
     await carregarProdutos()
     await carregarAdminEstoque()
-  } catch(err) { toast(`Erro: ${err.message}`,'error') }
+  } catch(err) { toast(msgErro(err),'error') }
 }
 
-/* --- Aba: Lucro (admin) --- */
+/* --- Aba: Lucro --- */
 async function carregarAdminLucro() {
-  const mes = parseInt(document.getElementById('admin-sel-mes-lucro').value)
-  const ano = parseInt(document.getElementById('admin-sel-ano-lucro').value)
-  const d = await api.lucroMensal(mes, ano)
-  const {receita,custo,lucro} = d
-  const pct = receita>0 ? ((lucro/receita)*100).toFixed(1) : '0'
+  const mes = parseInt($('admin-sel-mes-lucro').value)
+  const ano = parseInt($('admin-sel-ano-lucro').value)
+  let d
+  try { d = await api.adminLucro(mes, ano) } catch(err) { toast(msgErro(err),'error'); return }
+  const {receita,custo,lucro,receita_sem_custo} = d
+  const pct = receita>0 ? (lucro/receita)*100 : 0
 
-  document.getElementById('admin-stats-lucro').innerHTML = `
-    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:18px;">${MESES_PT[mes]} ${ano}</span></div>
-    <div class="stat-card"><span class="stat-label">Receita total</span><span class="stat-value green">${fmtMoeda(receita)}</span></div>
-    <div class="stat-card"><span class="stat-label">Custo total</span><span class="stat-value red">${fmtMoeda(custo)}</span></div>
-    <div class="stat-card highlight"><span class="stat-label">Lucro líquido</span><span class="stat-value ${lucro>=0?'green':'red'}">${fmtMoeda(lucro)}</span></div>
-    <div class="stat-card"><span class="stat-label">Margem</span><span class="stat-value ${parseFloat(pct)>=0?'purple':'red'}">${pct}%</span></div>`
+  $('admin-stats-lucro').innerHTML = `
+    <div class="stat-card"><span class="stat-label">Mês</span><span class="stat-value" style="font-size:20px;">${MESES_PT[mes]} ${ano}</span></div>
+    <div class="stat-card c-green"><span class="stat-label">Receita total</span><span class="stat-value green">${fmtMoeda(receita)}</span></div>
+    <div class="stat-card c-red"><span class="stat-label">Custo dos produtos</span><span class="stat-value red">${fmtMoeda(custo)}</span></div>
+    <div class="stat-card highlight c-purple"><span class="stat-label">Lucro bruto</span><span class="stat-value ${lucro>=0?'green':'red'}">${fmtMoeda(lucro)}</span></div>
+    <div class="stat-card"><span class="stat-label">Margem</span><span class="stat-value ${pct>=0?'purple':'red'}">${fmtPct(pct)}</span>
+      ${receita_sem_custo>0?`<span class="stat-sub">${fmtMoeda(receita_sem_custo)} vendidos sem custo cadastrado</span>`:''}</div>`
 
-  const chart = document.getElementById('admin-lucro-chart')
+  const chart = $('admin-lucro-chart')
   if (receita>0) {
     chart.style.display='block'
-    const cW=((custo/receita)*100).toFixed(1)
-    const lW=((Math.max(lucro,0)/receita)*100).toFixed(1)
-    document.getElementById('admin-lucro-bar').innerHTML=`
+    const pctDe = v => (Math.max(v,0)/receita)*100
+    $('admin-lucro-bar').innerHTML=`
       <div class="lucro-bar-wrap">
-        <div class="lucro-bar-custo" style="width:${cW}%"></div>
-        <div class="lucro-bar-lucro" style="width:${lW}%"></div>
+        <div class="lucro-bar-custo" style="width:${pctDe(custo).toFixed(2)}%"></div>
+        <div class="lucro-bar-lucro" style="width:${pctDe(lucro).toFixed(2)}%"></div>
+        <div class="lucro-bar-semcusto" style="width:${pctDe(receita_sem_custo).toFixed(2)}%"></div>
       </div>
       <div class="lucro-legend">
-        <div class="legend-item"><div class="legend-dot" style="background:#ef4444;"></div><span>Custo: ${fmtMoeda(custo)} (${cW}%)</span></div>
-        <div class="legend-item"><div class="legend-dot" style="background:#10b981;"></div><span>Lucro: ${fmtMoeda(lucro)} (${lW}%)</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f87171;"></div><span>Custo: ${fmtMoeda(custo)} (${fmtPct(pctDe(custo))})</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#34d399;"></div><span>Lucro: ${fmtMoeda(lucro)} (${fmtPct(pctDe(lucro))})</span></div>
+        ${receita_sem_custo>0?`<div class="legend-item"><div class="legend-dot" style="background:#d6d3e2;"></div><span>Sem custo cadastrado: ${fmtMoeda(receita_sem_custo)} (${fmtPct(pctDe(receita_sem_custo))})</span></div>`:''}
       </div>`
   } else { chart.style.display='none' }
 }
 
-document.getElementById('admin-btn-buscar-lucro').addEventListener('click', carregarAdminLucro)
+$('admin-btn-buscar-lucro').addEventListener('click', carregarAdminLucro)
 
-document.getElementById('admin-btn-export-lucro').addEventListener('click', async () => {
-  const mes = parseInt(document.getElementById('admin-sel-mes-lucro').value)
-  const ano = parseInt(document.getElementById('admin-sel-ano-lucro').value)
-  const { receita, custo, lucro } = await api.lucroMensal(mes, ano)
-  const pct   = receita > 0 ? ((lucro / receita) * 100).toFixed(1) : '0'
+$('admin-btn-export-lucro').addEventListener('click', async () => {
+  const mes = parseInt($('admin-sel-mes-lucro').value)
+  const ano = parseInt($('admin-sel-ano-lucro').value)
+  let d
+  try { d = await api.adminLucro(mes, ano) } catch(err) { toast(msgErro(err),'error'); return }
+  const { receita, custo, lucro } = d
+  const pct   = receita > 0 ? (lucro / receita) * 100 : 0
   const doc   = _novoPDF()
 
   let y = _pdfHeader(doc, 'Relatório de Lucratividade', `Período: ${MESES_PT[mes]} de ${ano}`, true)
@@ -1275,8 +2127,8 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   y = _pdfCards(doc, y, [
     { label: 'Receita total',  value: fmtMoeda(receita), color: 'green'  },
     { label: 'Custo total',    value: fmtMoeda(custo),   color: 'red'    },
-    { label: 'Lucro líquido',  value: fmtMoeda(lucro),   color: lucro >= 0 ? 'purple' : 'red' },
-    { label: 'Margem de lucro',value: `${pct}%`,          color: parseFloat(pct) >= 0 ? 'orange' : 'red' },
+    { label: 'Lucro bruto',    value: fmtMoeda(lucro),   color: lucro >= 0 ? 'purple' : 'red' },
+    { label: 'Margem de lucro',value: fmtPct(pct),        color: pct >= 0 ? 'orange' : 'red' },
   ])
 
   // Seção: Análise detalhada
@@ -1291,10 +2143,10 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   doc.text('Análise Detalhada', 20, y + 9)
 
   const linhas = [
-    ['Receita bruta (total de vendas):', fmtMoeda(receita)],
-    ['(-) Custo dos produtos vendidos:', fmtMoeda(custo)],
-    ['(=) Lucro operacional bruto:',     fmtMoeda(lucro)],
-    ['Margem de lucro sobre a receita:', `${pct}%`],
+    ['Receita (vendas com desconto aplicado):', fmtMoeda(receita)],
+    ['(-) Custo dos produtos vendidos:',        fmtMoeda(custo)],
+    ['(=) Lucro bruto:',                        fmtMoeda(lucro)],
+    ['Margem de lucro sobre a receita:',        fmtPct(pct)],
   ]
 
   doc.setFontSize(9)
@@ -1320,8 +2172,8 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
   if (receita > 0) {
     const barW = 182
     const barH = 10
-    const costoW = Math.min((custo / receita) * barW, barW)
-    const lucroW = Math.min((Math.max(lucro, 0) / receita) * barW, barW)
+    const custoW = Math.min((custo / receita) * barW, barW)
+    const lucroW = Math.min((Math.max(lucro, 0) / receita) * barW, barW - custoW)
 
     doc.setTextColor(71, 85, 105)
     doc.setFontSize(8)
@@ -1329,37 +2181,67 @@ document.getElementById('admin-btn-export-lucro').addEventListener('click', asyn
     doc.text('Composição da Receita', 14, y + 5)
     y += 9
 
-    // Fundo da barra (receita)
     doc.setFillColor(226, 232, 240)
     doc.roundedRect(14, y, barW, barH, 2, 2, 'F')
 
-    // Custo (vermelho)
-    if (costoW > 0) {
+    if (custoW > 0) {
       doc.setFillColor(239, 68, 68)
-      doc.roundedRect(14, y, costoW, barH, 2, 2, 'F')
+      doc.roundedRect(14, y, custoW, barH, 2, 2, 'F')
     }
 
-    // Lucro (verde) — sobrepõe após custo
     if (lucroW > 0) {
       doc.setFillColor(16, 185, 129)
-      doc.roundedRect(14 + costoW, y, lucroW, barH, 2, 2, 'F')
+      doc.roundedRect(14 + custoW, y, lucroW, barH, 2, 2, 'F')
     }
 
     y += barH + 5
 
-    // Legenda
     doc.setFillColor(239, 68, 68); doc.rect(14, y, 8, 4, 'F')
     doc.setTextColor(71, 85, 105); doc.setFontSize(8); doc.setFont('helvetica', 'normal')
-    doc.text(`Custo (${((custo/receita)*100).toFixed(1)}%)`, 24, y + 3.5)
+    doc.text(`Custo (${fmtPct((custo/receita)*100)})`, 24, y + 3.5)
 
     doc.setFillColor(16, 185, 129); doc.rect(80, y, 8, 4, 'F')
-    doc.text(`Lucro (${pct}%)`, 90, y + 3.5)
+    doc.text(`Lucro (${fmtPct(pct)})`, 90, y + 3.5)
+
+    doc.setFillColor(226, 232, 240); doc.rect(136, y, 8, 4, 'F')
+    doc.text('Sem custo cadastrado', 146, y + 3.5)
   }
 
   _pdfFooter(doc, true)
   doc.save(`lucro-${MESES_PT[mes].toLowerCase()}-${ano}-admin.pdf`)
   toast('PDF de lucro exportado!', 'success')
 })
+
+/* --- Aba: Segurança e backup --- */
+$('btn-alterar-senha').addEventListener('click', async ()=>{
+  const atual = $('senha-atual').value, nova = $('senha-nova').value, nova2 = $('senha-nova2').value
+  if (!atual || !nova)  { toast('Preencha a senha atual e a nova.','error'); return }
+  if (nova !== nova2)   { toast('As novas senhas não conferem.','error'); return }
+  if (nova.length < 6)  { toast('A nova senha deve ter pelo menos 6 caracteres.','error'); return }
+  try {
+    await api.adminAlterarSenha(atual, nova)
+    ;['senha-atual','senha-nova','senha-nova2'].forEach(id=>$(id).value='')
+    toast('Senha alterada com sucesso!','success')
+  } catch(err) { toast(msgErro(err),'error') }
+})
+
+async function carregarBackups() {
+  try {
+    const lista = await api.adminListarBackups()
+    $('lista-backups').innerHTML = !lista.length
+      ? '<div class="side-vazio">Nenhum backup automático ainda</div>'
+      : lista.map(b=>`<div class="backup-item"><span>${escHtml(b.nome)}</span><span>${new Date(b.data).toLocaleString('pt-BR')}</span></div>`).join('')
+  } catch(err) { toast(msgErro(err),'error') }
+}
+
+$('btn-backup-agora').addEventListener('click', async ()=>{
+  try {
+    const caminho = await api.adminBackup()
+    if (caminho) toast(`Backup salvo em ${caminho}`,'success')
+  } catch(err) { toast(msgErro(err),'error') }
+})
+
+$('btn-abrir-backups').addEventListener('click', ()=>api.adminAbrirPastaBackups().catch(err=>toast(msgErro(err),'error')))
 
 /* ============================================================
    ESTORNO DE VENDA
@@ -1371,17 +2253,18 @@ async function estornarVenda(id) {
   ).join('\n')
 
   confirmar(
-    `Estornar a venda #${id} (${fmtMoeda(venda.total)})?\n\nIsso removerá o registro e devolverá os itens ao estoque.\n\n${linhaItens}`,
+    `Estornar a venda nº ${fmtNumVenda(id)} (${fmtMoeda(venda.total)})?\n\nOs itens voltam para o estoque e a venda sai dos totais.\n\n${linhaItens}`,
     async () => {
       try {
-        await api.cancelarVenda(id)
-        toast(`Venda #${id} estornada. Estoque restaurado.`, 'success')
+        await api.adminEstornar(id)
+        toast(`Venda nº ${fmtNumVenda(id)} estornada. Estoque restaurado.`, 'success')
         await carregarProdutos()
         carregarAdminEstornos()
       } catch(err) {
-        toast(`Erro ao estornar: ${err.message}`, 'error')
+        toast(`Erro ao estornar: ${msgErro(err)}`, 'error')
       }
-    }
+    },
+    { titulo:'Estornar venda', botao:'Estornar' }
   )
 }
 
@@ -1390,11 +2273,46 @@ async function estornarVenda(id) {
    ============================================================ */
 async function init() {
   iniciarRelogio()
+  iniciarVersao()
   initDateSelectors()
-  try { await carregarProdutos() } catch(err) { toast(`Erro ao iniciar: ${err.message}`,'error') }
-
-  document.getElementById('data-hoje').textContent =
-    new Date().toLocaleDateString('pt-BR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})
+  renderCarrinho()
+  try {
+    await carregarProdutos()
+    await atualizarCaixa()
+  } catch(err) { toast(`Erro ao iniciar: ${msgErro(err)}`,'error') }
+  navigateTo('caixa')
 }
 
-init()
+/* ============================================================
+   VERSÃO E ATUALIZAÇÃO AUTOMÁTICA
+   ============================================================ */
+function renderAtualizacao(st) {
+  const box = $('atualizacao-box')
+  if (st && st.estado === 'pronta') {
+    box.style.display = 'block'
+    box.innerHTML = `Versão ${escHtml(st.versao)} pronta. Será instalada quando o sistema for fechado.
+      <button id="btn-instalar-atualizacao">Reiniciar e atualizar agora</button>`
+  } else if (st && st.estado === 'baixando') {
+    box.style.display = 'block'
+    box.innerHTML = `Baixando versão ${escHtml(st.versao || '')}${st.progresso != null ? ` (${st.progresso}%)` : ''}...`
+  } else box.style.display = 'none'
+}
+
+async function iniciarVersao() {
+  if (!api.versaoApp) return
+  try {
+    $('versao-app').textContent = `Versão ${await api.versaoApp()}`
+    renderAtualizacao(await api.statusAtualizacao())
+    api.aoMudarAtualizacao(renderAtualizacao)
+  } catch (e) { /* sem informação de versão */ }
+}
+
+$('atualizacao-box').addEventListener('click', e => {
+  if (!e.target.closest('#btn-instalar-atualizacao')) return
+  if (carrinho.length) { toast('Termine a venda em andamento antes de atualizar.', 'warn'); return }
+  confirmar('O sistema vai fechar, instalar a nova versão e abrir de novo. Seus dados continuam salvos.', () => api.instalarAtualizacao(),
+    { titulo: 'Atualizar agora', botao: 'Atualizar' })
+})
+
+// Espera os outros scripts (caixa, clientes, trocas, mercadorias) carregarem
+document.addEventListener('DOMContentLoaded', init)

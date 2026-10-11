@@ -1,0 +1,42 @@
+# Gera o instalador do Windows e publica no GitHub Releases.
+# O sistema instalado na loja verifica essas versões e se atualiza sozinho.
+#
+# Para lançar uma versão:
+#   1. Aumente "version" no package.json (ex.: 1.1.0 -> 1.2.0) e faça commit
+#   2. git tag v1.2.0 && git push origin v1.2.0
+name: Lançar versão
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Conferir se a tag bate com a versão do package.json
+        shell: bash
+        run: |
+          VERSAO="v$(node -p "require('./package.json').version")"
+          if [ "$VERSAO" != "${GITHUB_REF_NAME}" ]; then
+            echo "A tag ${GITHUB_REF_NAME} não bate com a versão $VERSAO do package.json"
+            exit 1
+          fi
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar instalador e publicar
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
