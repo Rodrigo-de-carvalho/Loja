@@ -228,8 +228,12 @@ class Database {
     this._addColuna('vendas', 'pagamento', "TEXT NOT NULL DEFAULT 'dinheiro'")
 
     // Desconto, troco e estorno sem apagar o registro
+    const temCol = (t, c) => this.db.prepare(`PRAGMA table_info(${t})`).all().some(x => x.name === c)
     if (this._addColuna('vendas', 'subtotal', 'REAL NOT NULL DEFAULT 0')) {
-      this.db.exec('UPDATE vendas SET subtotal = total')
+      // Bancos de outras versões podem já ter desconto separado do total
+      this.db.exec(temCol('vendas', 'desconto')
+        ? 'UPDATE vendas SET subtotal = total + desconto'
+        : 'UPDATE vendas SET subtotal = total')
     }
     this._addColuna('vendas', 'desconto',       'REAL NOT NULL DEFAULT 0')
     this._addColuna('vendas', 'valor_recebido', 'REAL')
@@ -238,6 +242,14 @@ class Database {
     this._addColuna('vendas', 'cancelado_em',   'TEXT')
     this._addColuna('vendas', 'caixa_id',       'INTEGER')
     this._addColuna('vendas', 'cliente_id',     'INTEGER')
+
+    // Compatibilidade com a versão que marcava estornos como 'estornada'
+    if (temCol('vendas', 'estornada_em')) {
+      this.db.exec(`
+        UPDATE vendas SET status = 'cancelada', cancelado_em = COALESCE(cancelado_em, estornada_em)
+        WHERE status = 'estornada'
+      `)
+    }
 
     // LGPD: quando o cliente concordou e quando os dados pessoais foram apagados
     this._addColuna('clientes', 'consentimento_em', 'TEXT')
@@ -256,9 +268,12 @@ class Database {
 
   /** Vendas feitas antes do pagamento dividido ganham uma linha de pagamento equivalente. */
   _preencherPagamentosAntigos() {
+    const temParcelas = this.db.prepare('PRAGMA table_info(vendas)').all().some(c => c.name === 'parcelas')
     this.db.exec(`
-      INSERT INTO venda_pagamentos (venda_id, forma, valor)
-      SELECT id, pagamento, total FROM vendas WHERE total > 0
+      INSERT INTO venda_pagamentos (venda_id, forma, valor, detalhe)
+      SELECT id, pagamento, total,
+        ${temParcelas ? "CASE WHEN parcelas > 1 THEN parcelas || 'x' END" : 'NULL'}
+      FROM vendas WHERE total <> 0
     `)
   }
 
